@@ -28,7 +28,7 @@ import java.util.Map;
 public class FFmpegGUI extends Application {
 
     private final ComboBox<String>[] audioInputs;
-    private final TextField[] pidFields; // TextFields for PIDs
+    private final TextField[] pidFields;
     private final ComboBox<String> videoInput;
     private final TextField delayInput;
     private final ComboBox<String> pixFormatInput;
@@ -46,10 +46,11 @@ public class FFmpegGUI extends Application {
     private final StreamRecorderRunnable streamRecorder = new StreamRecorderRunnable();
     private Settings settings;
     private ScrollPane consoleOutputScrollPane;
+    private static int MAX_NUMBER_OF_LANGUAGES=12;
 
     public FFmpegGUI() {
-        audioInputs = new ComboBox[12];
-        pidFields = new TextField[12];
+        audioInputs = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
+        pidFields = new TextField[MAX_NUMBER_OF_LANGUAGES];
         for (int i = 0; i < audioInputs.length; i++) {
             audioInputs[i] = new ComboBox<>();
             pidFields[i] = new TextField();
@@ -192,8 +193,7 @@ public class FFmpegGUI extends Application {
         inputGrid.setVgap(10);
         inputGrid.setPadding(new Insets(10));
 
-        int row = 12;
-
+        int row = 0;
         addLanguageRow(inputGrid, 0, "English:", audioInputs[0], pidFields[0]);
         addLanguageRow(inputGrid, 1, "Spanish:", audioInputs[1], pidFields[1]);
         addLanguageRow(inputGrid, 2, "French:", audioInputs[2], pidFields[2]);
