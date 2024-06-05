@@ -1,4 +1,4 @@
-package org.kadampa.festivalstreaming
+package org.kadampa.festivalstreaming;
 
 import com.github.sarxos.webcam.Webcam;
 import javafx.application.Application;
@@ -193,7 +193,7 @@ public class FFmpegGUI extends Application {
         inputGrid.setVgap(10);
         inputGrid.setPadding(new Insets(10));
 
-        int row = 0;
+        int row = 12;
         addLanguageRow(inputGrid, 0, "English:", audioInputs[0], pidFields[0]);
         addLanguageRow(inputGrid, 1, "Spanish:", audioInputs[1], pidFields[1]);
         addLanguageRow(inputGrid, 2, "French:", audioInputs[2], pidFields[2]);

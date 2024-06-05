@@ -1,4 +1,4 @@
-package org.kadampa.festivalstreaming
+package org.kadampa.festivalstreaming;
 
 import javafx.beans.property.BooleanProperty;
 import java.util.concurrent.Executors;

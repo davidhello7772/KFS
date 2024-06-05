@@ -1,4 +1,4 @@
-package org.kadampa.festivalstreaming
+package org.kadampa.festivalstreaming;
 
 import java.util.HashMap;
 import java.util.Map;

@@ -1,4 +1,4 @@
-package org.kadampa.festivalstreaming
+package org.kadampa.festivalstreaming;
 
 import java.io.BufferedReader;
 import java.io.InputStream;

@@ -1,4 +1,4 @@
-package org.kadampa.festivalstreaming
+package org.kadampa.festivalstreaming;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
