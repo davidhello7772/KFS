@@ -14,7 +14,6 @@ public class StreamRecorderRunnable implements Runnable {
     private String srtUrl;
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();;
-    public BooleanProperty running = new SimpleBooleanProperty(false);
     private Process process = null;
     private final StringProperty outputLineProperty = new SimpleStringProperty();
     private ProcessMonitor monitor;
@@ -33,7 +32,6 @@ public class StreamRecorderRunnable implements Runnable {
 
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         try {
-            running.setValue(true);
             process = processBuilder.start();
 
 
@@ -46,7 +44,6 @@ public class StreamRecorderRunnable implements Runnable {
             StringBuilder strBuild = new StringBuilder();
             int exitCode = process.waitFor();
         } catch (IOException | InterruptedException e) {
-            running.setValue(false);
             monitor.stopMonitoring();
             stop();
         }
@@ -133,7 +130,6 @@ public class StreamRecorderRunnable implements Runnable {
         if (process != null) {
             destroyProcessAndChildren(process);
         }
-        running.setValue(false);
     }
 
     public void initialiseAudioDevices(String[] deviceNames) {

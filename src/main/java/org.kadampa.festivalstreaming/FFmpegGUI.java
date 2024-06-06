@@ -16,6 +16,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
 import javafx.stage.Stage;
@@ -66,8 +67,32 @@ public class FFmpegGUI extends Application {
         outputFileInput = new TextField();
         consoleOutputTextArea = new TextFlow();
         startButton = new Button("Start");
+        startButton.getStyleClass().add("event-button");
+        startButton.getStyleClass().add("success-button");
+        SVGPath playPath = new SVGPath();
+        playPath.setContent("M16.6582 9.28638C18.098 10.1862 18.8178 10.6361 19.0647 11.2122C19.2803 11.7152 19.2803 12.2847 19.0647 12.7878C18.8178 13.3638 18.098 13.8137 16.6582 14.7136L9.896 18.94C8.29805 19.9387 7.49907 20.4381 6.83973 20.385C6.26501 20.3388 5.73818 20.0469 5.3944 19.584C5 19.053 5 18.1108 5 16.2264V7.77357C5 5.88919 5 4.94701 5.3944 4.41598C5.73818 3.9531 6.26501 3.66111 6.83973 3.6149C7.49907 3.5619 8.29805 4.06126 9.896 5.05998L16.6582 9.28638Z");
+        playPath.setScaleX(1);
+        playPath.setScaleY(1);
+        playPath.setFill(Color.WHITE);
+        startButton.setGraphicTextGap(15);
+        startButton.setGraphic(playPath);
+
         stopButton = new Button("Stop");
+        stopButton.getStyleClass().add("event-button");
+        stopButton.getStyleClass().add("danger-button");
+        stopButton.setDisable(true);
+        SVGPath stopPath = new SVGPath();
+        stopPath.setContent("M544,594 C544,594.553 543.553,595 543,595 L521,595 C520.447,595 520,594.553 520,594 L520,572 C520,571.448 520.447,571 521,571 L543,571 C543.553,571 544,571.448 544,572 L544,594 L544,594 Z M544,569 L520,569 C518.896,569 518,569.896 518,571 L518,595 C518,596.104 518.896,597 520,597 L544,597 C545.104,597 546,596.104 546,595 L546,571 C546,569.896 545.104,569 544,569 L544,569 Z");
+        stopPath.setScaleX(0.5);
+        stopPath.setScaleY(0.5);
+        stopPath.setFill(Color.WHITE);
+        stopButton.setGraphicTextGap(15);
+        stopButton.setGraphic(stopPath);
+
         clearOutputButton = new Button("Clear Output");
+        clearOutputButton.getStyleClass().add("event-button");
+
+        clearOutputButton.getStyleClass().add("secondary-button");
         // Load settings
         settings = SettingsUtil.loadSettings();
         applySettings();
@@ -136,7 +161,7 @@ public class FFmpegGUI extends Application {
     }
 
     private ScrollPane buildUI() {
-        BorderPane root = new BorderPane();
+        VBox root = new VBox();
 
         ImageView logoView = new ImageView(new Image("https://kadampafestivals.org/wp-content/uploads/2024/01/New-NKT-IKBU-Logo-Kadampa-Blue.png"));
         logoView.setFitHeight(50);
@@ -144,14 +169,14 @@ public class FFmpegGUI extends Application {
 
         // Create a label for the title
         Label titleLabel = new Label("International Kadampa Festival Streaming");
-        titleLabel.setStyle("-fx-font-size: 18px;"); // Set the font size of the label
+        titleLabel.getStyleClass().add("title");
+        titleLabel.getStyleClass().add("primary-text");
 
         // Create an HBox to hold the logo and the title label
         HBox titleBox = new HBox(10, logoView, titleLabel);
         titleBox.setAlignment(Pos.CENTER); // Center align the contents of the HBox
-
+        titleBox.setPadding(new Insets(20,0,20,0));
         TabPane tabPane = new TabPane();
-        tabPane.setPadding(new Insets(50, 0, 0, 0));
 
         // Language Settings Tab
         Tab languageTab = new Tab("Settings");
@@ -165,8 +190,7 @@ public class FFmpegGUI extends Application {
         controlConsoleTab.setContent(buildTabControlConsole());
         tabPane.getTabs().add(controlConsoleTab);
 
-        root.setTop(titleBox);
-        root.setCenter(tabPane);
+        root.getChildren().addAll(titleBox,tabPane);
         return new ScrollPane(root);
     }
 
@@ -180,8 +204,9 @@ public class FFmpegGUI extends Application {
         consoleOutputScrollPane.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         consoleOutputScrollPane.setFitToWidth(true); // Adjusts the width of the ScrollPane to fit its content
         VBox consoleBox = new VBox(10, new Label("Console Output"), consoleOutputScrollPane);
-        startButton.styleProperty().bind(streamRecorder.isAliveProperty().map(r -> r ? "-fx-background-color: red;" : ""));
         streamRecorder.isAliveProperty().addListener(b->startButton.setDisable(streamRecorder.isAliveProperty().getValue()));
+        streamRecorder.isAliveProperty().addListener(b->stopButton.setDisable(streamRecorder.isAliveProperty().not().getValue()));
+
         HBox buttonBox = new HBox(10, startButton, stopButton,clearOutputButton);
         buttonBox.setPadding(new Insets(20, 0, 20, 0));
         return new VBox(10, buttonBox, consoleBox);
@@ -244,6 +269,7 @@ public class FFmpegGUI extends Application {
     public void start(Stage primaryStage) {
         ScrollPane pane = buildUI();
         Scene scene = new Scene(new ScrollPane(pane), 800, 600);
+        scene.getStylesheets().add("javafx@main.css");
         primaryStage.setScene(scene);
         primaryStage.setTitle("FFmpeg GUI");
         primaryStage.setOnCloseRequest(e -> {
