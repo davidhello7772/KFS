@@ -1,34 +1,27 @@
 package org.kadampa.festivalstreaming;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.io.*;
 
 public class SettingsUtil {
-    private static final String SETTINGS_FILE = "settings.json";
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-
-    public static Settings loadSettings() {
-        try {
-            if (Files.exists(Paths.get(SETTINGS_FILE))) {
-                String json = new String(Files.readAllBytes(Paths.get(SETTINGS_FILE)));
-                return GSON.fromJson(json, Settings.class);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return new Settings();  // return default settings if file does not exist or an error occurred
-    }
+    private static final String SETTINGS_FILE = "settings.ser";
 
     public static void saveSettings(Settings settings) {
-        try {
-            String json = GSON.toJson(settings);
-            Files.write(Paths.get(SETTINGS_FILE), json.getBytes());
+        try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(SETTINGS_FILE))) {
+            out.writeObject(settings);
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public static Settings loadSettings() {
+        File settingsFile = new File(SETTINGS_FILE);
+        if (settingsFile.exists()) {
+            try (ObjectInputStream in = new ObjectInputStream(new FileInputStream(settingsFile))) {
+                return (Settings) in.readObject();
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+        return new Settings();
     }
 }

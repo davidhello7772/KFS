@@ -1,29 +1,36 @@
 package org.kadampa.festivalstreaming;
 
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 
-public class Settings {
-    private Map<String, String> audioInputs = new HashMap<>();
-    private Map<String, String> pids = new HashMap<>();
+public class Settings implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private final Map<String, String> audioInputs = new HashMap<>();
+    private final Map<String, String> audioInputsChannel = new HashMap<>();
+    private final Map<String, String> pids = new HashMap<>();
     private String videoInput;
+    private String videoBitrateInput;
+    private String videoBufferInput;
+    private String audioBufferInput;
+    private String videoPID;
     private String delay;
     private String pixFormat;
-    private String streamId;
     private String srtDef;
     private String fileDef;
     private String encoder;
     private String srtDest;
     private String outputFile;
+    private String audioBitrate; // Add audio bitrate field
+    private String fps; // Add FPS field
 
     public Map<String, String> getAudioInputs() {
         return audioInputs;
     }
 
-    public Map<String, String> getPids() {
-        return pids;
+    public Map<String, String> getAudioInputsChannel() {
+        return audioInputsChannel;
     }
-
     public String getVideoInput() {
         return videoInput;
     }
@@ -46,14 +53,6 @@ public class Settings {
 
     public void setPixFormat(String pixFormat) {
         this.pixFormat = pixFormat;
-    }
-
-    public String getStreamId() {
-        return streamId;
-    }
-
-    public void setStreamId(String streamId) {
-        this.streamId = streamId;
     }
 
     public String getSrtDef() {
@@ -94,5 +93,53 @@ public class Settings {
 
     public void setOutputFile(String outputFile) {
         this.outputFile = outputFile;
+    }
+
+    public String getAudioBitrate() {
+        return audioBitrate;
+    }
+
+    public void setAudioBitrate(String audioBitrate) {
+        this.audioBitrate = audioBitrate;
+    }
+
+    public String getFps() {
+        return fps;
+    }
+
+    public void setFps(String fps) {
+        this.fps = fps;
+    }
+
+    public String getVideoPID() {
+        return videoPID;
+    }
+
+    public void setVideoPID(String videoPID) {
+        this.videoPID = videoPID;
+    }
+
+    public void setVideoBitrateInput(String videoBitrateInput) {
+        this.videoBitrateInput = videoBitrateInput;
+    }
+
+    public void setVideoBufferInput(String videoBufferInput) {
+        this.videoBufferInput = videoBufferInput;
+    }
+
+    public void setAudioBufferInput(String audioBufferInput) {
+        this.audioBufferInput = audioBufferInput;
+    }
+
+    public String getVideoBitrateInput() {
+        return videoBitrateInput;
+    }
+
+    public String getVideoBufferInput() {
+        return videoBufferInput;
+    }
+
+    public String getAudioBufferInput() {
+        return audioBufferInput;
     }
 }

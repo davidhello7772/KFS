@@ -112,6 +112,23 @@
    -fx-font-weight: bolder;
 }
 
+.tooltip {
+    -fx-background-color: #333333; /* Dark background color */
+    -fx-text-fill: #ffffff; /* White text color */
+    -fx-font-size: 14px; /* Adjust the font size */
+    -fx-padding: 10px; /* Padding inside the tooltip */
+    -fx-border-color: #999999; /* Border color */
+    -fx-border-width: 1px; /* Border width */
+    -fx-border-radius: 5px; /* Rounded corners */
+    -fx-background-radius: 5px; /* Rounded corners for background */
+}
+
+.info-for-tooltip {
+    -fx-font-size: 12px;
+    -fx-translate-y: -6px;
+    -fx-padding: 2 5;
+}
+
 .small-text
 {
   -fx-font-size: 9px;

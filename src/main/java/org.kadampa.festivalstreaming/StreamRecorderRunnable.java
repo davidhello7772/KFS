@@ -11,37 +11,45 @@ import java.util.Objects;
 import java.util.concurrent.Executors;
 
 public class StreamRecorderRunnable implements Runnable {
+
+    private Settings settings;
     private String srtUrl;
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();;
+    private String outputResolution;
+    private String pixelFormat;
+    private String encoder;
+    private String audioBitrate;
+    private String videoBitrate;
+    private String videoBufferSize;
+    private String audioBufferSize;
+    private int fps;
+    private int delay;
     private Process process = null;
     private final StringProperty outputLineProperty = new SimpleStringProperty();
     private ProcessMonitor monitor;
     private final BooleanProperty isAliveProperty = new SimpleBooleanProperty(); // Create the property
-
+    private int videoPid;
 
     public StreamRecorderRunnable() {
 
     }
-
+    public void setSettings(Settings settings) {
+        this.settings = settings;
+    }
     @Override
     public void run() {
        List<String> command = initialiseFFMpegCommand();
-       System.out.println(String.join(" ", command));
        outputLineProperty.setValue(String.join(" ", command));
 
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         try {
             process = processBuilder.start();
-
-
             monitor = new ProcessMonitor(process, isAliveProperty);
-
             StreamGobbler inputStreamGobbler = new StreamGobbler(process.getInputStream(), outputLineProperty::setValue);
             StreamGobbler errorStreamGobbler = new StreamGobbler(process.getErrorStream(), outputLineProperty::setValue);
             Executors.newSingleThreadExecutor().submit(inputStreamGobbler);
             Executors.newSingleThreadExecutor().submit(errorStreamGobbler);
-            StringBuilder strBuild = new StringBuilder();
             int exitCode = process.waitFor();
         } catch (IOException | InterruptedException e) {
             monitor.stopMonitoring();
@@ -53,6 +61,10 @@ public class StreamRecorderRunnable implements Runnable {
         return process;
     }
 
+    public String getFFMpegCommand() {
+        return String.join(" ",initialiseFFMpegCommand());
+    }
+
     private List<String> initialiseFFMpegCommand() {
         List<String> devicesListCommand = new ArrayList<>();
         List<String> filterComplexCommand = new ArrayList<>();
@@ -62,7 +74,7 @@ public class StreamRecorderRunnable implements Runnable {
         List<String> outputCommand = new ArrayList<>();
         //The video device
         devicesListCommand.add("-rtbufsize");
-        devicesListCommand.add("1024M");
+        devicesListCommand.add(videoBufferSize);
         devicesListCommand.add("-f");
         devicesListCommand.add("dshow");
         devicesListCommand.add("-i");
@@ -76,42 +88,42 @@ public class StreamRecorderRunnable implements Runnable {
         for(String audioDevice:audioDevicesList) {
             i++;
             devicesListCommand.add("-rtbufsize");
-            devicesListCommand.add("256M");
+            devicesListCommand.add(audioBufferSize);
             devicesListCommand.add("-f");
             devicesListCommand.add("dshow");
             devicesListCommand.add("-i");
             devicesListCommand.add("\"audio=" + audioDevice+"\"");
-            int audioDelay = 800;
-            filterCommand.append("[").append(i).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append("[out").append(i).append("];");
+            filterCommand.append("[").append(i).append(":a]adelay=").append(delay).append("|").append(delay).append("[out").append(i).append("];");
             mapCommand.add("-map");
             mapCommand.add("\"[out"+i+"]\"");
+            //TODO : if we split the input into left and right
+            //ffmpeg -f alsa -ac 2 -i hw:0 -filter_complex "[0:a]channelsplit=channel_layout=stereo[left][right]" -map "[left]" left_channel.wav
         }
 
         filterCommand.append("[0:v]settb=AVTB,setpts=PTS-STARTPTS[vid]");
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add("\""+ filterCommand +"\"");
-
         parameterCommand.add("-s");
-        parameterCommand.add("hd720");
+        parameterCommand.add(outputResolution);
         parameterCommand.add("-c:v");
-        parameterCommand.add("libx264");
+        parameterCommand.add(encoder);
         parameterCommand.add("-b:v");
-        parameterCommand.add("2M");
+        parameterCommand.add(videoBitrate);
         parameterCommand.add("-pix_fmt");
-        parameterCommand.add("yuv420p");
+        parameterCommand.add(pixelFormat);
         parameterCommand.add("-c:a");
         parameterCommand.add("aac");
         parameterCommand.add("-b:a");
-        parameterCommand.add("128");
+        parameterCommand.add(audioBitrate);
         parameterCommand.add("-f");
         parameterCommand.add("mpegts");
         parameterCommand.add("-mpegts_flags");
         parameterCommand.add("+initial_discontinuity");
         parameterCommand.add("-mpegts_start_pid");
-        parameterCommand.add("0x20");
+        parameterCommand.add(String.valueOf(videoPid));
 
         outputCommand.add("-r");
-        outputCommand.add("30");
+        outputCommand.add(String.valueOf(fps));
         outputCommand.add("\""+srtUrl+"\"");
 
         List<String> finalCommand = new ArrayList<>();
@@ -179,5 +191,44 @@ public class StreamRecorderRunnable implements Runnable {
 
     public BooleanProperty isAliveProperty() {
         return isAliveProperty;
+    }
+
+    public void setOutputResolution(String outputResolution) {
+        this.outputResolution = outputResolution;
+    }
+
+    public void setPixelFormat(String pixelFormat) {
+        this.pixelFormat = pixelFormat;
+    }
+
+    public void setEncoder(String encoder) {
+        this.encoder = encoder;
+    }
+
+    public void setDelay(int delay) {
+        this.delay = delay;
+    }
+
+    public void setAudioBitrate(String audioBitrate) {
+        this.audioBitrate = audioBitrate;
+    }
+    public void setFps(int fps) {
+        this.fps = fps;
+    }
+
+    public void setVideoPid(int videoPid) {
+        this.videoPid = videoPid;
+    }
+
+    public void setVideoBitrate(String videoBitrate) {
+        this.videoBitrate = videoBitrate;
+    }
+
+    public void setVideoBufferSize(String videoBufferSize) {
+        this.videoBufferSize = videoBufferSize;
+    }
+
+    public void setAudioBufferSize(String audioBufferSize) {
+        this.audioBufferSize = audioBufferSize;
     }
 }
