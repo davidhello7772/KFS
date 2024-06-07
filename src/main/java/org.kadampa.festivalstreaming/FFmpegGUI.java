@@ -44,8 +44,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 //TODO :
-//- Add the splitting of the audio stereo in ffmpeg command
-//- Display the PID informations for the audios in the info command, and also the player url with the languages
+//- verification des champs
+//- Empecher la scroll pane de descendre automatiquement si on la monte manuellement
 public class FFmpegGUI extends Application {
     private final ComboBox<String>[] audioInputs;
     private final ComboBox<String>[] audioInputsChannel;
@@ -176,9 +176,7 @@ public class FFmpegGUI extends Application {
 
         clearOutputButton = new Button("Clear Output");
         clearOutputButton.getStyleClass().add("event-button");
-
         clearOutputButton.getStyleClass().add("secondary-button");
-
 
         // Add action listeners
         startButton.setOnAction(event -> {
@@ -351,7 +349,49 @@ public class FFmpegGUI extends Application {
     }
 
     private Node buildTabInfo() {
-        return new VBox(10, textAreaInfo);
+        VBox infoVBox = new VBox(5);
+        infoVBox.setPadding(new Insets(20,10,10,10));
+        Label ffmpegCommandLabel = new Label("Generated FFMpeg command:");
+        ffmpegCommandLabel.setStyle("-fx-font-weight: bold;");
+        infoVBox.getChildren().add(ffmpegCommandLabel);
+
+        textAreaInfo.setWrapText(true);
+        infoVBox.getChildren().add(textAreaInfo);
+
+        Label pidInfo = new Label("PID information:");
+        pidInfo.setStyle("-fx-font-weight: bold;");
+        infoVBox.getChildren().add(pidInfo);
+
+        int pidVideo = Integer.parseInt(videoPidField.getText());
+        int currentAudioPID =  pidVideo+1;
+        Label pidValue = new Label("PID Video: " + pidVideo);
+        infoVBox.getChildren().add(pidValue);
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID English: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Spanish: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID French: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Portuguese: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID German: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Cantonese: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Mandarin: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Vietnamese: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Italian: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Finnish: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Greek: " + currentAudioPID));
+        currentAudioPID++;
+        infoVBox.getChildren().add(new Label("PID Extra Language 1: " + currentAudioPID));
+
+        return infoVBox;
     }
 
     private Node buildTabControlConsole() {
@@ -379,7 +419,7 @@ public class FFmpegGUI extends Application {
                     stopButton.setDisable(true);
                     startButton.setText("Start");
                     blinkingTimeLine.stop();
-                    startButton.setStyle("-fx-background-color: -green-color;");
+                    startButton.setStyle("");
                 });});
 
         HBox buttonBox = new HBox(80, startButton, stopButton,clearOutputButton);
@@ -487,12 +527,22 @@ public class FFmpegGUI extends Application {
         inputGrid2.getColumnConstraints().addAll(col1, col2, col3,col4,col5,col6);
 
         row = 0;
-        inputGrid2.add(new Label("Output url:"), 0, row);
+        Label outputinfoLabel = new Label("?");
+        outputinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltipOutput = new Tooltip("Choose the output, either a srt stream copied and paste from the streaming platform, or a file. The SRT protocol support multiaudio track, but not the RTMP protool");
+        Tooltip.install(outputinfoLabel, tooltipOutput);
+        tooltipOutput.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltipOutput.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltipOutput.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltipOutput.getStyleClass().add("tooltip");
+        Label outputLabel = new Label("Output url:");
+        // Create an HBox to hold both labels
+        HBox outputHBox = new HBox(1,outputLabel,outputinfoLabel);
+        inputGrid2.add(outputHBox, 0, row);
         inputGrid2.add(srtDestInput, 1, row);
         srtDestInput.setMaxWidth(670);
         GridPane.setColumnSpan(srtDestInput, 5);
         row++;
-
         Separator verticalSeparator = new Separator();
         inputGrid2.add(verticalSeparator,0,row);
         GridPane.setColumnSpan(verticalSeparator, 6);
@@ -504,7 +554,18 @@ public class FFmpegGUI extends Application {
         GridPane.setColumnSpan(advancedOutputLabel, 6);
         row++;
 
-        inputGrid2.add(new Label("Delay in ms:"), 0, row);
+        Label delayinfoLabel = new Label("?");
+        delayinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltipDelay = new Tooltip("The delay of the audio in ms to synchronise with the video");
+        Tooltip.install(delayinfoLabel, tooltipDelay);
+        tooltipDelay.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltipDelay.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltipDelay.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltipDelay.getStyleClass().add("tooltip");
+        Label delayLabel = new Label("Delay in ms:");
+        // Create an HBox to hold both labels
+        HBox delayHBox = new HBox(1,delayLabel,delayinfoLabel);
+        inputGrid2.add(delayHBox, 0, row);
         inputGrid2.add(delayInput, 1, row);
         delayInput.setMaxWidth(comboWith);
 
@@ -535,7 +596,6 @@ public class FFmpegGUI extends Application {
         inputGrid2.add(audioInputBuffer, 5, row);
         audioInputBuffer.setPrefWidth(comboWith);
         row++;
-
 
         Button saveButton = new Button("Save settings");
         saveButton.getStyleClass().add("event-button");
@@ -582,7 +642,7 @@ public class FFmpegGUI extends Application {
 
         Label audioChannelinfoLabel2 = new Label("?");
         audioChannelinfoLabel2.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip2 = new Tooltip("If the input device manage only this language, choose 'Join'. Otherwise, choose 'Left' for the first language manage by the device, and 'Right' for the second language.");
+        Tooltip tooltip2 = new Tooltip("If the input device manage only this language, choose 'Join'. Otherwise, choose 'Left' for the first language manage by the device, and 'Right' for the second language.\nWARNING: make sure the audio input support stereo if you choose left or right");
         Tooltip.install(audioChannelinfoLabel2, tooltip2);
         tooltip2.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
         tooltip2.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
@@ -626,6 +686,7 @@ public class FFmpegGUI extends Application {
         streamRecorder.setSrtUrl(srtDestInput.getText());
         streamRecorder.initialiseVideoDevice(videoInput.getValue());
         streamRecorder.initialiseAudioDevices(Arrays.stream(audioInputs).map(ComboBox::getValue).toArray(String[]::new));
+        streamRecorder.initialiseAudioDevicesChannel(Arrays.stream(audioInputsChannel).map(ComboBox::getValue).toArray(String[]::new));
         streamRecorder.setPixelFormat(pixFormatInput.getValue());
         streamRecorder.setOutputResolution(srtDefInput.getValue());
         streamRecorder.setDelay(Integer.parseInt(delayInput.getText()));
@@ -637,6 +698,7 @@ public class FFmpegGUI extends Application {
         streamRecorder.setVideoBufferSize(videoInputBuffer.getValue());
         streamRecorder.setFps(Integer.parseInt(framePerSecond.getValue()));
 
+        textAreaInfo.setText(streamRecorder.getFFMpegCommand());
         // Add a listener to the StringProperty
         processEndedProperty.setValue(false);
         stopButton.setDisable(false);
@@ -646,7 +708,6 @@ public class FFmpegGUI extends Application {
                 consoleOutputScrollPane.setVvalue(1.0);
             });
         });
-        textAreaInfo.setText(streamRecorder.getFFMpegCommand());
         encodingThread = new Thread(() -> {
             // Your existing code for streamRecorder.run() goes here
             streamRecorder.setSrtUrl(srtDestInput.getText());

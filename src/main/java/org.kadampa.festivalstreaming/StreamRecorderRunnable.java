@@ -4,8 +4,11 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import javafx.scene.control.ComboBox;
+
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
@@ -16,6 +19,8 @@ public class StreamRecorderRunnable implements Runnable {
     private String srtUrl;
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();;
+    private final List<String> audioInputsChannel = new ArrayList<>();
+
     private String outputResolution;
     private String pixelFormat;
     private String encoder;
@@ -40,8 +45,6 @@ public class StreamRecorderRunnable implements Runnable {
     @Override
     public void run() {
        List<String> command = initialiseFFMpegCommand();
-       outputLineProperty.setValue("Command: " + String.join(" ", command));
-
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         try {
             process = processBuilder.start();
@@ -81,7 +84,8 @@ public class StreamRecorderRunnable implements Runnable {
         devicesListCommand.add("\"video=" + videoDevice+"\"");
         mapCommand.add("-map");
         mapCommand.add("\"[vid]\"");
-
+        streamIdCommand.add("-streamid");
+        streamIdCommand.add("0:"+ videoPid);
         StringBuilder filterCommand = new StringBuilder();
         int i = 0;
         //The audio devices
@@ -93,13 +97,35 @@ public class StreamRecorderRunnable implements Runnable {
             devicesListCommand.add("dshow");
             devicesListCommand.add("-i");
             devicesListCommand.add("\"audio=" + audioDevice+"\"");
-            filterCommand.append("[").append(i).append(":a]adelay=").append(delay).append("|").append(delay).append("[out").append(i).append("];");
-            mapCommand.add("-map");
-            mapCommand.add("\"[out"+i+"]\"");
-            //TODO : if we split the input into left and right
-            //ffmpeg -f alsa -ac 2 -i hw:0 -filter_complex "[0:a]channelsplit=channel_layout=stereo[left][right]" -map "[left]" left_channel.wav
-        }
+            if(audioInputsChannel.get(i-1).equals("Join")) {
+                filterCommand.append("[").append(i).append(":a]adelay=").append(delay).append("|").append(delay).append("[out").append(i).append("];");
+                mapCommand.add("-map");
+                mapCommand.add("\"[out"+i+"]\"");
+                streamIdCommand.add("-streamid");
+                int audioPid = videoPid +i;
+                streamIdCommand.add(i+":"+ audioPid);
+            }
+            else {
+                filterCommand.append("[").append(i).append(":a]channelsplit[left").append(i).append("][right").append(i).append("];");
+                if(audioInputsChannel.get(i-1).equals("Left")) {
+                    filterCommand.append("[left").append(i).append("]adelay=").append(delay).append("|").append(delay).append("[outleft").append(i).append("];");
+                    mapCommand.add("-map");
+                    mapCommand.add("\"[outleft"+i+"]\"");
+                    streamIdCommand.add("-streamid");
+                    int audioPid = videoPid +i;
+                    streamIdCommand.add(i+":"+ audioPid);
+                }
+                if(audioInputsChannel.get(i-1).equals("Right")) {
+                    filterCommand.append("[right").append(i).append("]adelay=").append(delay).append("|").append(delay).append("[outright").append(i).append("];");
+                    mapCommand.add("-map");
+                    mapCommand.add("\"[outright"+i+"]\"");
+                    streamIdCommand.add("-streamid");
+                    int audioPid = videoPid +i;
+                    streamIdCommand.add(i+":"+ audioPid);
+                }
+            }
 
+        }
         filterCommand.append("[0:v]settb=AVTB,setpts=PTS-STARTPTS[vid]");
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add("\""+ filterCommand +"\"");
@@ -132,7 +158,12 @@ public class StreamRecorderRunnable implements Runnable {
         finalCommand.addAll(filterComplexCommand);
         finalCommand.addAll(mapCommand);
         finalCommand.addAll(parameterCommand);
-        finalCommand.addAll(streamIdCommand);
+
+        //Not needed:  Relationship Between -mpegts_start_pid and -streamid:
+        //Default Behavior: If you only use -mpegts_start_pid, streams will be assigned PIDs starting from this value in a sequential manner (37, 38, 39, ...).
+        //Custom Mapping: By using -streamid, you can override this default sequential assignment and specify exact PIDs for each stream. This allows you more control over the PID allocation.
+        //finalCommand.addAll(streamIdCommand);
+
         finalCommand.addAll(outputCommand);
         return finalCommand;
     }
@@ -152,6 +183,11 @@ public class StreamRecorderRunnable implements Runnable {
             }
         }
     }
+    public void initialiseAudioDevicesChannel(String[] channelInfos) {
+        audioInputsChannel.clear();
+        audioInputsChannel.addAll(Arrays.asList(channelInfos));
+    }
+
     public void initialiseVideoDevice(String deviceName) {
         videoDevice = deviceName;
     }
