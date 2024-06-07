@@ -1,8 +1,12 @@
 package org.kadampa.festivalstreaming;
 
 import com.github.sarxos.webcam.Webcam;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.value.ChangeListener;
+import javafx.beans.value.ObservableValue;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -31,12 +35,16 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+//TODO :
+//- Add the splitting of the audio stereo in ffmpeg command
+//- Display the PID informations for the audios in the info command, and also the player url with the languages
+//- add a blinking playing banner when playing.
 public class FFmpegGUI extends Application {
     private final ComboBox<String>[] audioInputs;
     private final ComboBox<String>[] audioInputsChannel;
-
-    private final TextField[] audioPidFields;
     private final TextField videoPidField;
     private final ComboBox<String> videoInput;
     private final ComboBox<String> videoInputBuffer;
@@ -62,7 +70,6 @@ public class FFmpegGUI extends Application {
     private ScrollPane consoleOutputScrollPane;
     private final SVGPath stopPath = new SVGPath();
     private final TextArea textAreaInfo = new TextArea();
-
     private static final int WINDOW_WIDTH = 900;
     private static final int WINDOW_HEIGHT = 900;
 
@@ -73,7 +80,6 @@ public class FFmpegGUI extends Application {
         int MAX_NUMBER_OF_LANGUAGES = 12;
         audioInputs = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
         audioInputsChannel = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
-        audioPidFields = new TextField[MAX_NUMBER_OF_LANGUAGES];
         for (int i = 0; i < audioInputs.length; i++) {
             audioInputs[i] = new ComboBox<>();
             audioInputsChannel[i] = new ComboBox<>();
@@ -158,9 +164,7 @@ public class FFmpegGUI extends Application {
         clearOutputButton.getStyleClass().add("event-button");
 
         clearOutputButton.getStyleClass().add("secondary-button");
-        // Load settings
-        settings = SettingsUtil.loadSettings();
-        applySettings();
+
 
         // Add action listeners
         startButton.setOnAction(event -> {
@@ -174,8 +178,7 @@ public class FFmpegGUI extends Application {
 
         ProgressIndicator progressIndicator = new ProgressIndicator();
         progressIndicator.setMaxSize(20,20);
-        progressIndicator.setStyle("-fx-progress-color: white;"+
-                "-fx-stroke: white;");
+        progressIndicator.setStyle("-fx-progress-color: white;");
 
         stopButton.setOnAction((event -> {
             stopButton.setGraphic(progressIndicator);
@@ -206,6 +209,10 @@ public class FFmpegGUI extends Application {
         for (Webcam webcam : webcams) {
             this.videoInput.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
         }
+        // Load settings
+        settings = SettingsUtil.loadSettings();
+        applySettings();
+
     }
     private void applySettings() {
         Map<String, String> audioSettings = settings.getAudioInputs();
@@ -214,6 +221,16 @@ public class FFmpegGUI extends Application {
         }
         for (int i = 0; i < audioInputsChannel.length; i++) {
             audioInputsChannel[i].setValue(settings.getAudioInputsChannel().getOrDefault("audioChannel" + i, ""));
+        }
+        for (int i = 0; i < audioInputs.length; i++) {
+            if(audioInputs[i].getValue()=="") {
+                audioInputs[i].setValue("Not Used");
+                audioInputsChannel[i].setValue("Join");
+            }
+            if(audioInputs[i].getValue()=="Not Used") {
+                audioInputsChannel[i].setValue("Join");
+                audioInputsChannel[i].setDisable(true);
+            }
         }
 
         videoInput.setValue(settings.getVideoInput());
@@ -305,12 +322,11 @@ public class FFmpegGUI extends Application {
         consoleOutputScrollPane.setMinSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-250);
         consoleOutputScrollPane.setMaxSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-250);
         consoleOutputScrollPane.setFitToWidth(true); // Adjusts the width of the ScrollPane to fit its content
-        VBox consoleBox = new VBox(10, new Label("Console Output"), consoleOutputScrollPane);
+        Label consoleLabel = new Label("Console Output");
+        consoleLabel.setStyle("-fx-font-weight: bold;");
+        VBox consoleBox = new VBox(10, consoleLabel, consoleOutputScrollPane);
         streamRecorder.isAliveProperty().addListener(b->startButton.setDisable(streamRecorder.isAliveProperty().getValue()));
-        streamRecorder.isAliveProperty().addListener(b-> {
-            stopButton.setDisable(streamRecorder.isAliveProperty().not().getValue());
-            stopButton.setGraphic(stopPath);
-        });
+        streamRecorder.isAliveProperty().addListener(b-> stopButton.setDisable(streamRecorder.isAliveProperty().not().getValue()));
 
         HBox buttonBox = new HBox(80, startButton, stopButton,clearOutputButton);
         buttonBox.setAlignment(Pos.CENTER);
@@ -403,17 +419,17 @@ public class FFmpegGUI extends Application {
 
         int comboWith = 100;
         ColumnConstraints col1 = new ColumnConstraints();
-        col1.setPercentWidth(13); // Définit la largeur de la première colonne à 30%
+        col1.setPercentWidth(13);
         ColumnConstraints col2 = new ColumnConstraints();
-        col2.setPercentWidth(20); // Déf20it la largeur de la deuxième colonne à 50%
+        col2.setPercentWidth(20);
         ColumnConstraints col3 = new ColumnConstraints();
-        col3.setPercentWidth(15); // Définit la largeur de la troisième colonne à 20%
+        col3.setPercentWidth(15);
         ColumnConstraints col4 = new ColumnConstraints();
-        col4.setPercentWidth(22); // Définit la largeur de la première colonne à 30%
+        col4.setPercentWidth(22);
         ColumnConstraints col5 = new ColumnConstraints();
-        col5.setPercentWidth(15); // Définit la largeur de la deuxième colonne à 50%
+        col5.setPercentWidth(15);
         ColumnConstraints col6 = new ColumnConstraints();
-        col6.setPercentWidth(20); // Définit la largeur de la troisième colonne à 20%
+        col6.setPercentWidth(20);
         inputGrid2.getColumnConstraints().addAll(col1, col2, col3,col4,col5,col6);
 
         row = 0;
@@ -470,7 +486,24 @@ public class FFmpegGUI extends Application {
         Button saveButton = new Button("Save settings");
         saveButton.getStyleClass().add("event-button");
         saveButton.getStyleClass().add("primary-button");
-        saveButton.setOnAction((event -> {saveSettings();}));
+
+        SVGPath checkmark = new SVGPath();
+        checkmark.setContent("M10 20 l5 5 l10 -10"); // Simplified checkmark path
+        checkmark.setStroke(Color.WHITE);
+        checkmark.setFill(Color.TRANSPARENT);
+        saveButton.setGraphic(checkmark);
+        ProgressIndicator progress = new ProgressIndicator();
+        progress.setStyle("-fx-progress-color: white;");
+        progress.setMaxSize(16,16);
+        // Action for the Save button
+        saveButton.setOnAction(event -> {
+            saveSettings();
+            saveButton.setGraphic(progress);
+            // Create a Timeline to hide the checkmark after 1 second
+            Timeline timeline = new Timeline(new KeyFrame(Duration.seconds(1), e -> saveButton.setGraphic(checkmark)));
+            timeline.play();
+        });
+
         HBox saveHBox = new HBox(saveButton);
         saveHBox.setAlignment(Pos.CENTER);
         saveHBox.setPadding(new Insets(20,0,20,0));
@@ -505,6 +538,15 @@ public class FFmpegGUI extends Application {
         HBox audioChannelLabelHBox = new HBox(1,audioChannelLabel,audioChannelinfoLabel2);  // 5 is the spacing between the labels
         gridPane.add(audioChannelLabelHBox, 2, rowIndex);
         gridPane.add(audioInputChannel, 3, rowIndex);
+
+        audioInput.valueProperty().addListener((observable, oldValue, newValue) -> {
+            if (!newValue.equals("Not Used") && !newValue.isEmpty()) {
+                audioInputChannel.setDisable(false);
+                audioInputChannel.setValue("Join");
+            } else {
+                audioInputChannel.setDisable(true);
+            }
+        });
     }
 
     @Override
@@ -559,10 +601,6 @@ public class FFmpegGUI extends Application {
             }
         });
         encodingThread.start();
-//       //  Wait for the encoding thread to be fully constructed
-//        while (streamRecorder.getProcess() == null) {
-//            Thread.sleep(1000); // Adjust the sleep duration as needed
-//        }
     }
 
     private void stopEncodingThread() {
@@ -579,12 +617,13 @@ public class FFmpegGUI extends Application {
                 encodingThread.join();
                 if (exitCode != 0) {
                     // FFmpeg process exited with an error
-                    System.out.println("FFmpeg process exited with error code " + exitCode);
+                    appendToConsole("FFmpeg process exited with error code " + exitCode,"",true);
                 }
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
+        stopButton.setGraphic(stopPath);
     }
 
     private void appendToConsole(String newLine, String oldLine, boolean isError) {
@@ -592,7 +631,17 @@ public class FFmpegGUI extends Application {
         if (isError) {
             text.setFill(Color.RED);
         }
-        if(newLine.contains("Error"))  text.setFill(Color.RED);
+        String[] errorTerms = {"error", "fatal", "err", "Error:", "Failed", "Invalid", "Unable"};
+        String[] warningTerms = {"[warning]", "[warn]", "Warning:", "warning","[advisory]", "[nonfatal]", "ignored","deprecated","Potential", "Consider","Deprecated"};
+        String errorRegex = String.join("|", errorTerms);
+        String warningRegex = String.join("|", warningTerms);
+        Pattern errorPattern = Pattern.compile(errorRegex);
+        Pattern warningPattern = Pattern.compile(warningRegex);
+        Matcher errorMatcher = errorPattern.matcher(newLine);
+        Matcher warningMatcher = warningPattern.matcher(newLine);
+        if (errorMatcher.find()) text.setFill(Color.RED);
+        if (warningMatcher.find()) text.setFill(Color.ORANGE);
+
         if(oldLine!=null && oldLine.startsWith("frame=") && newLine.startsWith("frame="))
         {
             int lastIndex = consoleOutputTextArea.getChildren().size() - 1;
@@ -603,70 +652,7 @@ public class FFmpegGUI extends Application {
         }
         consoleOutputTextArea.getChildren().add(text);
     }
-
     public static void main(String[] args) {
         launch(args);
-    }
-
-    // Custom OutputStream to write to the TextFlow
-    public static class ConsoleOutputStream extends OutputStream {
-        private final TextFlow console;
-        private final StringBuilder buffer = new StringBuilder();
-        private static final Map<String, String> ANSI_COLOR_MAP = new HashMap<>();
-        static {
-            ANSI_COLOR_MAP.put("\u001B[30m", "-fx-fill: black;");
-            ANSI_COLOR_MAP.put("\u001B[31m", "-fx-fill: red;");
-            ANSI_COLOR_MAP.put("\u001B[32m", "-fx-fill: green;");
-            ANSI_COLOR_MAP.put("\u001B[33m", "-fx-fill: yellow;");
-            ANSI_COLOR_MAP.put("\u001B[34m", "-fx-fill: blue;");
-            ANSI_COLOR_MAP.put("\u001B[35m", "-fx-fill: magenta;");
-            ANSI_COLOR_MAP.put("\u001B[36m", "-fx-fill: cyan;");
-            ANSI_COLOR_MAP.put("\u001B[37m", "-fx-fill: white;");
-            ANSI_COLOR_MAP.put("\u001B[0m", null);  // Reset
-        }
-
-        private String currentStyle = null;
-
-        public ConsoleOutputStream(TextFlow console) {
-            this.console = console;
-        }
-        @Override
-        public void write(int b) throws IOException {
-            char c = (char) b;
-            buffer.append(c);
-
-            if (c == '\n') {
-                flushBuffer();
-            }
-        }
-        @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            String text = new String(b, off, len);
-            buffer.append(text);
-            if (text.contains("\n")) {
-                flushBuffer();
-            }
-        }
-
-        private void flushBuffer() {
-            String text = buffer.toString();
-            buffer.setLength(0);
-
-            String[] parts = text.split("(\u001B\\[[0-9;]*m)");
-            Platform.runLater(() -> {
-                for (String part : parts) {
-                    String style = ANSI_COLOR_MAP.get(part);
-                    if (style != null) {
-                        currentStyle = style;
-                    } else {
-                        Text styledText = new Text(part);
-                        if (currentStyle != null) {
-                            styledText.setStyle(currentStyle);
-                        }
-                        console.getChildren().add(styledText);
-                    }
-                }
-            });
-        }
     }
 }

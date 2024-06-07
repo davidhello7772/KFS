@@ -52,7 +52,7 @@ public class StreamRecorderRunnable implements Runnable {
             Executors.newSingleThreadExecutor().submit(errorStreamGobbler);
             int exitCode = process.waitFor();
         } catch (IOException | InterruptedException e) {
-            monitor.stopMonitoring();
+            if(monitor!=null) monitor.stopMonitoring();
             stop();
         }
     }
