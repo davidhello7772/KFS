@@ -5,8 +5,11 @@ import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
+import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -35,13 +38,14 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 //TODO :
 //- Add the splitting of the audio stereo in ffmpeg command
 //- Display the PID informations for the audios in the info command, and also the player url with the languages
-//- add a blinking playing banner when playing.
 public class FFmpegGUI extends Application {
     private final ComboBox<String>[] audioInputs;
     private final ComboBox<String>[] audioInputsChannel;
@@ -75,6 +79,8 @@ public class FFmpegGUI extends Application {
 
     private static final double TOOLTIP_DELAY = 0.2;
     private static final int TOOLTIP_DURATION=10;
+    private Timeline blinkingTimeLine;
+    private BooleanProperty processEndedProperty = new SimpleBooleanProperty();
 
     public FFmpegGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
@@ -142,6 +148,14 @@ public class FFmpegGUI extends Application {
         startButton = new Button("Start");
         startButton.getStyleClass().add("event-button");
         startButton.getStyleClass().add("success-button");
+        blinkingTimeLine = new Timeline(
+                new KeyFrame(Duration.seconds(0.5), e -> startButton.setStyle("-fx-background-color: -green-color;")), // Original color (green)
+                new KeyFrame(Duration.seconds(1), e -> startButton.setStyle("-fx-background-color: -red-color;")) // Blinking color (red)
+        );
+
+        blinkingTimeLine.setCycleCount(Timeline.INDEFINITE); // Repeat indefinitely
+        blinkingTimeLine.setAutoReverse(true); // Auto-reverse to create the blinking effect
+
         SVGPath playPath = new SVGPath();
         playPath.setContent("M16.6582 9.28638C18.098 10.1862 18.8178 10.6361 19.0647 11.2122C19.2803 11.7152 19.2803 12.2847 19.0647 12.7878C18.8178 13.3638 18.098 13.8137 16.6582 14.7136L9.896 18.94C8.29805 19.9387 7.49907 20.4381 6.83973 20.385C6.26501 20.3388 5.73818 20.0469 5.3944 19.584C5 19.053 5 18.1108 5 16.2264V7.77357C5 5.88919 5 4.94701 5.3944 4.41598C5.73818 3.9531 6.26501 3.66111 6.83973 3.6149C7.49907 3.5619 8.29805 4.06126 9.896 5.05998L16.6582 9.28638Z");
         playPath.setScaleX(1);
@@ -180,10 +194,34 @@ public class FFmpegGUI extends Application {
         progressIndicator.setMaxSize(20,20);
         progressIndicator.setStyle("-fx-progress-color: white;");
 
-        stopButton.setOnAction((event -> {
+        stopButton.setOnAction(event -> {
             stopButton.setGraphic(progressIndicator);
-            stopEncodingThread();
-        }));
+            // Create a Task to run the long-running method in the background
+            Task<Void> task = new Task<Void>() {
+                @Override
+                protected Void call() throws Exception {
+                    stopEncodingThread(); // Simulate long-running task
+                    return null;
+                }
+
+                @Override
+                protected void succeeded() {
+                    super.succeeded();
+                    // Reset the button graphic after the task is done
+                    stopButton.setGraphic(stopPath);
+                }
+
+                @Override
+                protected void failed() {
+                    super.failed();
+                    // Handle any errors if needed
+                    stopButton.setGraphic(stopPath); // Reset the graphic
+                }
+            };
+
+            // Start the task on a new thread
+            new Thread(task).start();
+        });
 
         //clearOutputButton.setOnAction((ActionEvent e) ->consoleOutputTextArea.getChildren().clear());
         clearOutputButton.setOnAction((ActionEvent e) ->consoleOutputTextArea.getChildren().clear());
@@ -290,23 +328,23 @@ public class FFmpegGUI extends Application {
         TabPane tabPane = new TabPane();
         tabPane.setPrefWidth(WINDOW_WIDTH-2);
 
-        // Language Settings Tab
-        Tab languageTab = new Tab("Settings");
-        languageTab.setClosable(false);
-        languageTab.setContent(buildTabSettings());
-        tabPane.getTabs().add(languageTab);
-
         // Control and Console Tab
         Tab controlConsoleTab = new Tab("Control and Console");
         controlConsoleTab.setClosable(false);
         controlConsoleTab.setContent(buildTabControlConsole());
         tabPane.getTabs().add(controlConsoleTab);
 
+        // Language Settings Tab
+        Tab settingTab = new Tab("Settings");
+        settingTab.setClosable(false);
+        settingTab.setContent(buildTabSettings());
+        tabPane.getTabs().add(settingTab);
+
+
         Tab infoTab = new Tab("Informations");
         infoTab.setClosable(false);
         infoTab.setContent(buildTabInfo());
         tabPane.getTabs().add(infoTab);
-
 
         root.getChildren().addAll(titleBox,tabPane);
         return new ScrollPane(root);
@@ -325,8 +363,24 @@ public class FFmpegGUI extends Application {
         Label consoleLabel = new Label("Console Output");
         consoleLabel.setStyle("-fx-font-weight: bold;");
         VBox consoleBox = new VBox(10, consoleLabel, consoleOutputScrollPane);
-        streamRecorder.isAliveProperty().addListener(b->startButton.setDisable(streamRecorder.isAliveProperty().getValue()));
-        streamRecorder.isAliveProperty().addListener(b-> stopButton.setDisable(streamRecorder.isAliveProperty().not().getValue()));
+        streamRecorder.isAliveProperty().addListener(b->{
+            if(streamRecorder.isAliveProperty().getValue()) {
+                Platform.runLater(()->{
+                    startButton.setText("Currently Playing");
+                    blinkingTimeLine.play(); // Start the animation
+                });
+            }
+            startButton.setDisable(streamRecorder.isAliveProperty().getValue());
+        });
+        processEndedProperty.addListener(b-> {
+            if(processEndedProperty.get())
+                Platform.runLater(()->{
+                    stopButton.setGraphic(stopPath);
+                    stopButton.setDisable(true);
+                    startButton.setText("Start");
+                    blinkingTimeLine.stop();
+                    startButton.setStyle("-fx-background-color: -green-color;");
+                });});
 
         HBox buttonBox = new HBox(80, startButton, stopButton,clearOutputButton);
         buttonBox.setAlignment(Pos.CENTER);
@@ -486,6 +540,7 @@ public class FFmpegGUI extends Application {
         Button saveButton = new Button("Save settings");
         saveButton.getStyleClass().add("event-button");
         saveButton.getStyleClass().add("primary-button");
+        saveButton.setGraphicTextGap(15);
 
         SVGPath checkmark = new SVGPath();
         checkmark.setContent("M10 20 l5 5 l10 -10"); // Simplified checkmark path
@@ -580,11 +635,14 @@ public class FFmpegGUI extends Application {
         streamRecorder.setAudioBufferSize(audioInputBuffer.getValue());
         streamRecorder.setVideoBitrate(videoBitrate.getValue());
         streamRecorder.setVideoBufferSize(videoInputBuffer.getValue());
+        streamRecorder.setFps(Integer.parseInt(framePerSecond.getValue()));
 
         // Add a listener to the StringProperty
+        processEndedProperty.setValue(false);
+        stopButton.setDisable(false);
         streamRecorder.getOutputLineProperty().addListener((observable, oldValue, newValue) -> {
             Platform.runLater(() -> {
-                appendToConsole(newValue, oldValue,false);
+                appendToConsole(newValue, oldValue,null);
                 consoleOutputScrollPane.setVvalue(1.0);
             });
         });
@@ -615,32 +673,38 @@ public class FFmpegGUI extends Application {
             encodingThread.interrupt();
             try {
                 encodingThread.join();
+                processEndedProperty.setValue(true);
                 if (exitCode != 0) {
                     // FFmpeg process exited with an error
-                    appendToConsole("FFmpeg process exited with error code " + exitCode,"",true);
+                    Platform.runLater(()->appendToConsole("FFmpeg process exited with error code " + exitCode,"",Color.BLUE));
                 }
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
-        stopButton.setGraphic(stopPath);
     }
 
-    private void appendToConsole(String newLine, String oldLine, boolean isError) {
+    private void appendToConsole(String newLine, String oldLine, Color color) {
         Text text = new Text(newLine + "\n");
-        if (isError) {
-            text.setFill(Color.RED);
+        if (color!=null) {
+            text.setFill(color);
         }
-        String[] errorTerms = {"error", "fatal", "err", "Error:", "Failed", "Invalid", "Unable"};
+        String[] infoTerms = {"Info:", "Command:"};
+        String[] errorTerms = {"error", "fatal", "err", "Error:", "Failed", "Invalid", "Unable","dropped","Incompatible"};
         String[] warningTerms = {"[warning]", "[warn]", "Warning:", "warning","[advisory]", "[nonfatal]", "ignored","deprecated","Potential", "Consider","Deprecated"};
+        String infoRegex = String.join("|", infoTerms);
         String errorRegex = String.join("|", errorTerms);
         String warningRegex = String.join("|", warningTerms);
+        Pattern infoPattern = Pattern.compile(infoRegex);
         Pattern errorPattern = Pattern.compile(errorRegex);
         Pattern warningPattern = Pattern.compile(warningRegex);
-        Matcher errorMatcher = errorPattern.matcher(newLine);
+        Matcher info = infoPattern.matcher(newLine);
         Matcher warningMatcher = warningPattern.matcher(newLine);
+        Matcher errorMatcher = errorPattern.matcher(newLine);
+
         if (errorMatcher.find()) text.setFill(Color.RED);
-        if (warningMatcher.find()) text.setFill(Color.ORANGE);
+        if (info.find()) text.setFill(Color.BLUE);
+       // if (warningMatcher.find()) text.setFill(Color.ORANGE);
 
         if(oldLine!=null && oldLine.startsWith("frame=") && newLine.startsWith("frame="))
         {

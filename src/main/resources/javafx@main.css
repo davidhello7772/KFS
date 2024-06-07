@@ -11,6 +11,7 @@
     -orange-color: #EE7130;
 }
 
+
 .event-button
 {
     -fx-background-radius: 4;
@@ -42,6 +43,9 @@
 .success-button {
     -fx-background-color: -green-color;
     -fx-text-fill: white;
+}
+.success-button:disabled {
+    -fx-opacity: 1; /* Keep full opacity */
 }
 
 .success-button:hover {

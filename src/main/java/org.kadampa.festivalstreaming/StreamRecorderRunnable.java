@@ -40,7 +40,7 @@ public class StreamRecorderRunnable implements Runnable {
     @Override
     public void run() {
        List<String> command = initialiseFFMpegCommand();
-       outputLineProperty.setValue(String.join(" ", command));
+       outputLineProperty.setValue("Command: " + String.join(" ", command));
 
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         try {
@@ -159,12 +159,12 @@ public class StreamRecorderRunnable implements Runnable {
         ProcessHandle processHandle = process.toHandle();
         processHandle.descendants().forEach(ph -> {
                     ph.destroy();
-                    outputLineProperty.setValue("Stopping child process");
+                    //outputLineProperty.setValue("Stopping child process");
                 });
         process.destroy();
-        outputLineProperty.setValue("Stopping parent process");
+        //outputLineProperty.setValue("Stopping parent process");
         try {
-            Thread.sleep(5000); // Wait for 5 seconds
+            Thread.sleep(3000); // Wait for 5 seconds
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
