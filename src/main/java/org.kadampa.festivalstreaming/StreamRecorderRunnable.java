@@ -106,9 +106,9 @@ public class StreamRecorderRunnable implements Runnable {
                 streamIdCommand.add(i+":"+ audioPid);
             }
             else {
-                filterCommand.append("[").append(i).append(":a]channelsplit[left").append(i).append("][right").append(i).append("];");
+                filterCommand.append("[").append(i).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
                 if(audioInputsChannel.get(i-1).equals("Left")) {
-                    filterCommand.append("[left").append(i).append("]adelay=").append(delay).append("|").append(delay).append("[outleft").append(i).append("];");
+                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[outleft").append(i).append("];");
                     mapCommand.add("-map");
                     mapCommand.add("\"[outleft"+i+"]\"");
                     streamIdCommand.add("-streamid");
@@ -116,7 +116,7 @@ public class StreamRecorderRunnable implements Runnable {
                     streamIdCommand.add(i+":"+ audioPid);
                 }
                 if(audioInputsChannel.get(i-1).equals("Right")) {
-                    filterCommand.append("[right").append(i).append("]adelay=").append(delay).append("|").append(delay).append("[outright").append(i).append("];");
+                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[outright").append(i).append("];");
                     mapCommand.add("-map");
                     mapCommand.add("\"[outright"+i+"]\"");
                     streamIdCommand.add("-streamid");

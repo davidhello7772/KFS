@@ -1,5 +1,6 @@
 package org.kadampa.festivalstreaming;
 
+import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -16,6 +17,9 @@ public class ProcessMonitor {
         this.isAliveProperty = isAliveProperty;
         this.scheduler = Executors.newSingleThreadScheduledExecutor();
         startMonitoring();
+        isAliveProperty.addListener((observable, oldValue, isAlive) -> {
+            if(!isAlive) this.stopMonitoring();
+        });
     }
 
     private void startMonitoring() {
@@ -27,4 +31,6 @@ public class ProcessMonitor {
     public void stopMonitoring() {
         scheduler.shutdown();
     }
+
+
 }

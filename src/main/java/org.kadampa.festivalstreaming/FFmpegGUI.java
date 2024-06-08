@@ -2,13 +2,10 @@ package org.kadampa.festivalstreaming;
 
 import com.github.sarxos.webcam.Webcam;
 import javafx.animation.KeyFrame;
+import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.value.ChangeListener;
-import javafx.beans.value.ObservableValue;
 import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
@@ -18,13 +15,13 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.SVGPath;
-import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
 import javafx.stage.Stage;
@@ -32,14 +29,9 @@ import javafx.util.Duration;
 
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Mixer;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -63,8 +55,7 @@ public class FFmpegGUI extends Application {
     private final TextField outputFileInput;
     private final ComboBox<String> audioBitrateInput;
     private final ComboBox<String> framePerSecond;
-    //private final TextArea consoleOutputTextArea;
-    private final TextFlow consoleOutputTextArea;
+    private final TextFlow consoleOutputTextFlow;
     private final Button startButton;
     private final Button stopButton;
     private final Button clearOutputButton;
@@ -80,7 +71,8 @@ public class FFmpegGUI extends Application {
     private static final double TOOLTIP_DELAY = 0.2;
     private static final int TOOLTIP_DURATION=10;
     private Timeline blinkingTimeLine;
-    private BooleanProperty processEndedProperty = new SimpleBooleanProperty();
+    private boolean manualScroll = false;
+    private boolean doWeAutomaticallyScrollAtBottom = true;
 
     public FFmpegGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
@@ -143,7 +135,7 @@ public class FFmpegGUI extends Application {
         encoderInput.getItems().add("h264_amf");
         srtDestInput = new TextField();
         outputFileInput = new TextField();
-        consoleOutputTextArea = new TextFlow();
+        consoleOutputTextFlow = new TextFlow();
         //consoleOutputTextArea = new TextArea();
         startButton = new Button("Start");
         startButton.getStyleClass().add("event-button");
@@ -181,7 +173,7 @@ public class FFmpegGUI extends Application {
         // Add action listeners
         startButton.setOnAction(event -> {
             try {
-                consoleOutputTextArea.getChildren().clear();
+                consoleOutputTextFlow.getChildren().clear();
                 startEncodingThread();
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -222,7 +214,7 @@ public class FFmpegGUI extends Application {
         });
 
         //clearOutputButton.setOnAction((ActionEvent e) ->consoleOutputTextArea.getChildren().clear());
-        clearOutputButton.setOnAction((ActionEvent e) ->consoleOutputTextArea.getChildren().clear());
+        clearOutputButton.setOnAction((ActionEvent e) -> consoleOutputTextFlow.getChildren().clear());
 
 
         Mixer.Info[] mixerInfos = AudioSystem.getMixerInfo();
@@ -395,11 +387,19 @@ public class FFmpegGUI extends Application {
     }
 
     private Node buildTabControlConsole() {
-        consoleOutputScrollPane = new ScrollPane(consoleOutputTextArea);
-        consoleOutputScrollPane.setMouseTransparent(false);
+        consoleOutputScrollPane = new ScrollPane(consoleOutputTextFlow);
         consoleOutputScrollPane.setMinSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-250);
         consoleOutputScrollPane.setMaxSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-250);
         consoleOutputScrollPane.setFitToWidth(true); // Adjusts the width of the ScrollPane to fit its content
+        consoleOutputScrollPane.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> manualScroll = true);
+
+        consoleOutputScrollPane.vvalueProperty().addListener(v->{
+            if (manualScroll) {
+                this.doWeAutomaticallyScrollAtBottom = false;
+                manualScroll = false;
+            }
+        });
+
         Label consoleLabel = new Label("Console Output");
         consoleLabel.setStyle("-fx-font-weight: bold;");
         VBox consoleBox = new VBox(10, consoleLabel, consoleOutputScrollPane);
@@ -410,17 +410,23 @@ public class FFmpegGUI extends Application {
                     blinkingTimeLine.play(); // Start the animation
                 });
             }
-            startButton.setDisable(streamRecorder.isAliveProperty().getValue());
-        });
-        processEndedProperty.addListener(b-> {
-            if(processEndedProperty.get())
+            else {
                 Platform.runLater(()->{
-                    stopButton.setGraphic(stopPath);
-                    stopButton.setDisable(true);
-                    startButton.setText("Start");
-                    blinkingTimeLine.stop();
-                    startButton.setStyle("");
-                });});
+                    //We wait for 3 seconds to give the time to the thread to end properly
+                    //(in the streamRecorder, we also wait 3s for the process to end before destroying it forcefully
+                    PauseTransition delay = new PauseTransition(Duration.seconds(3)); // Pause for 3 seconds
+                    delay.setOnFinished(event -> {
+                        stopButton.setGraphic(stopPath);
+                        stopButton.setDisable(true);
+                        startButton.setText("Start");
+                        blinkingTimeLine.stop();
+                        startButton.setStyle("");
+                        startButton.setDisable(streamRecorder.isAliveProperty().getValue());
+                    });
+                    delay.play();
+                });
+            }
+        });
 
         HBox buttonBox = new HBox(80, startButton, stopButton,clearOutputButton);
         buttonBox.setAlignment(Pos.CENTER);
@@ -683,6 +689,7 @@ public class FFmpegGUI extends Application {
     }
 
     private void startEncodingThread() throws Exception {
+        doWeAutomaticallyScrollAtBottom = true;
         streamRecorder.setSrtUrl(srtDestInput.getText());
         streamRecorder.initialiseVideoDevice(videoInput.getValue());
         streamRecorder.initialiseAudioDevices(Arrays.stream(audioInputs).map(ComboBox::getValue).toArray(String[]::new));
@@ -699,13 +706,10 @@ public class FFmpegGUI extends Application {
         streamRecorder.setFps(Integer.parseInt(framePerSecond.getValue()));
 
         textAreaInfo.setText(streamRecorder.getFFMpegCommand());
-        // Add a listener to the StringProperty
-        processEndedProperty.setValue(false);
         stopButton.setDisable(false);
         streamRecorder.getOutputLineProperty().addListener((observable, oldValue, newValue) -> {
             Platform.runLater(() -> {
                 appendToConsole(newValue, oldValue,null);
-                consoleOutputScrollPane.setVvalue(1.0);
             });
         });
         encodingThread = new Thread(() -> {
@@ -734,7 +738,6 @@ public class FFmpegGUI extends Application {
             encodingThread.interrupt();
             try {
                 encodingThread.join();
-                processEndedProperty.setValue(true);
                 if (exitCode != 0) {
                     // FFmpeg process exited with an error
                     Platform.runLater(()->appendToConsole("FFmpeg process exited with error code " + exitCode,"",Color.BLUE));
@@ -751,31 +754,34 @@ public class FFmpegGUI extends Application {
             text.setFill(color);
         }
         String[] infoTerms = {"Info:", "Command:"};
-        String[] errorTerms = {"error", "fatal", "err", "Error:", "Failed", "Invalid", "Unable","dropped","Incompatible"};
-        String[] warningTerms = {"[warning]", "[warn]", "Warning:", "warning","[advisory]", "[nonfatal]", "ignored","deprecated","Potential", "Consider","Deprecated"};
+        String[] errorTerms = {"error", "fatal", "Failed", "Invalid", "Unable","dropped","failed","Incompatible"};
+        String[] warningTerms = {"ignored","deprecated","unsupported", "Could not","Deprecated","incorrect","confused"};
         String infoRegex = String.join("|", infoTerms);
         String errorRegex = String.join("|", errorTerms);
         String warningRegex = String.join("|", warningTerms);
-        Pattern infoPattern = Pattern.compile(infoRegex);
-        Pattern errorPattern = Pattern.compile(errorRegex);
-        Pattern warningPattern = Pattern.compile(warningRegex);
+        Pattern infoPattern = Pattern.compile(infoRegex,Pattern.CASE_INSENSITIVE);
+        Pattern errorPattern = Pattern.compile(errorRegex,Pattern.CASE_INSENSITIVE);
+        Pattern warningPattern = Pattern.compile(warningRegex,Pattern.CASE_INSENSITIVE);
         Matcher info = infoPattern.matcher(newLine);
         Matcher warningMatcher = warningPattern.matcher(newLine);
         Matcher errorMatcher = errorPattern.matcher(newLine);
 
-        if (errorMatcher.find()) text.setFill(Color.RED);
         if (info.find()) text.setFill(Color.BLUE);
-       // if (warningMatcher.find()) text.setFill(Color.ORANGE);
+        if (warningMatcher.find()) text.setFill(Color.ORANGE);
+        if (errorMatcher.find()) text.setFill(Color.RED);
 
         if(oldLine!=null && oldLine.startsWith("frame=") && newLine.startsWith("frame="))
         {
-            int lastIndex = consoleOutputTextArea.getChildren().size() - 1;
+            int lastIndex = consoleOutputTextFlow.getChildren().size() - 1;
             if (lastIndex >= 0) {
-                Node lastNode = consoleOutputTextArea.getChildren().get(lastIndex);
-                consoleOutputTextArea.getChildren().remove(lastNode);
+                Node lastNode = consoleOutputTextFlow.getChildren().get(lastIndex);
+                consoleOutputTextFlow.getChildren().remove(lastNode);
             }
         }
-        consoleOutputTextArea.getChildren().add(text);
+        consoleOutputTextFlow.getChildren().add(text);
+        if(doWeAutomaticallyScrollAtBottom) {
+            consoleOutputScrollPane.setVvalue(1.0);
+        }
     }
     public static void main(String[] args) {
         launch(args);
