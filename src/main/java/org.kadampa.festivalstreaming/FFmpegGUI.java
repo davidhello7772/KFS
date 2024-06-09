@@ -394,7 +394,6 @@ public class FFmpegGUI extends Application {
         infoVBox.getChildren().add(finishPID);
         infoVBox.getChildren().add(greekPID);
         infoVBox.getChildren().add(extraLanguagePID);
-        displayPIDInfo();
         return infoVBox;
     }
 
@@ -964,7 +963,7 @@ public class FFmpegGUI extends Application {
             parameters +="Ελληνικά";
             firstParameter = false;
         }
-        return baseURL+rValue+parameters;
+        return baseURL+parameters;
     }
 
     private boolean checkParameters() {
