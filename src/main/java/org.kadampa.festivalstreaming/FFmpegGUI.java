@@ -6,6 +6,10 @@ import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
@@ -16,21 +20,18 @@ import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
-import javafx.scene.layout.ColumnConstraints;
-import javafx.scene.layout.GridPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Mixer;
-import java.net.URI;
-import java.net.URISyntaxException;
+import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,7 @@ public class FFmpegGUI extends Application {
     private final ComboBox<String> srtDefInput;
     private final ComboBox<String> fileDefInput;
     private final ComboBox<String> encoderInput;
+    private final ComboBox<String> chooseBetweenUrlOrFileInput;
     private final TextField srtDestInput;
     private final TextField outputFileInput;
     private final ComboBox<String> audioBitrateInput;
@@ -59,6 +61,8 @@ public class FFmpegGUI extends Application {
     private final Button startButton;
     private final Button stopButton;
     private final Button clearOutputButton;
+    private StringProperty playingText = new SimpleStringProperty();
+    private StringProperty informationText = new SimpleStringProperty();
     private Thread encodingThread;
     private final StreamRecorderRunnable streamRecorder = new StreamRecorderRunnable();
     private final Settings settings;
@@ -85,8 +89,17 @@ public class FFmpegGUI extends Application {
     private final Label finishPID = new Label("");
     private final Label greekPID = new Label("");
     private final Label extraLanguagePID = new Label("");
+    private final Label nowPlayingLabel = new Label("");
+    private final HBox nowPlayingBox = new HBox(nowPlayingLabel);
+    private final BooleanProperty isTheOutputAFile = new SimpleBooleanProperty();
 
-    private TextField playerURLTextField = new TextField();
+    private final TextField playerURLTextField = new TextField();
+    private final HBox outputFileHBox = new HBox();
+    private final HBox outputUrlHBox = new HBox();
+    private Scene scene;
+    private Tab settingTab;
+    private Tab controlConsoleTab;
+    private ScrollPane mainSrollPane;
 
     public FFmpegGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
@@ -146,16 +159,29 @@ public class FFmpegGUI extends Application {
         encoderInput = new ComboBox<>();
         encoderInput.getItems().add("libx264");
         encoderInput.getItems().add("h264_nvenc");
+
+        chooseBetweenUrlOrFileInput = new ComboBox<>();
+        chooseBetweenUrlOrFileInput.getItems().add("Srt URL (livestream)");
+        chooseBetweenUrlOrFileInput.getItems().add("File");
+
+        chooseBetweenUrlOrFileInput.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> isTheOutputAFile.setValue("File".equals(newValue)));
+
+        isTheOutputAFile.addListener((observable, oldValue, newValue) -> {
+            if(controlConsoleTab!=null) {
+                applyStyleOnOutputTypeChange(newValue);}});
+
         srtDestInput = new TextField();
         outputFileInput = new TextField();
+        outputFileHBox.visibleProperty().bind(isTheOutputAFile);
+        outputUrlHBox.visibleProperty().bind(isTheOutputAFile.not());
         consoleOutputTextFlow = new TextFlow();
         //consoleOutputTextArea = new TextArea();
         startButton = new Button("Start");
         startButton.getStyleClass().add("event-button");
         startButton.getStyleClass().add("success-button");
         blinkingTimeLine = new Timeline(
-                new KeyFrame(Duration.seconds(0.5), e -> startButton.setStyle("-fx-background-color: -green-color;")), // Original color (green)
-                new KeyFrame(Duration.seconds(1), e -> startButton.setStyle("-fx-background-color: -red-color;")) // Blinking color (red)
+                new KeyFrame(Duration.seconds(0.2), e -> nowPlayingBox.setStyle("")), // Original color (green)
+                new KeyFrame(Duration.seconds(1), e -> nowPlayingBox.setStyle("-fx-background-color: -red-color;")) // Blinking color (red)
         );
 
         blinkingTimeLine.setCycleCount(Timeline.INDEFINITE); // Repeat indefinitely
@@ -255,6 +281,35 @@ public class FFmpegGUI extends Application {
         applySettings();
 
     }
+
+    private void applyStyleOnOutputTypeChange(Boolean newValue) {
+        if(newValue) {
+            updateSceneStyle("light-blue");
+            informationText.setValue("WAITING TO RECORD");
+        }
+        else {
+            updateSceneStyle("");
+            informationText.setValue("WAITING TO LIVESTREAM");
+        }
+    }
+
+
+    private void updateSceneStyle(String color) {
+        // Update root style
+        //make sure the color style is define in the css
+        if("".equals(color)) {
+            mainSrollPane.getStyleClass().removeAll("bg-light-blue");
+            mainSrollPane.getChildrenUnmodifiable().forEach(child -> {
+                child.getStyleClass().removeAll("bg-light-blue");
+            });}
+        if(!("".equals(color))) {
+            mainSrollPane.getStyleClass().add("bg-" + color);
+            // Update styles of the children
+            mainSrollPane.getChildrenUnmodifiable().forEach(child -> {
+                child.getStyleClass().add("bg-" + color);
+            });
+        }
+    }
     private void applySettings() {
         Map<String, String> audioSettings = settings.getAudioInputs();
         for (int i = 0; i < audioInputs.length; i++) {
@@ -281,6 +336,7 @@ public class FFmpegGUI extends Application {
         videoPidField.setText(settings.getVideoPID());
         delayInput.setText(settings.getDelay());
         pixFormatInput.setValue(settings.getPixFormat());
+        chooseBetweenUrlOrFileInput.setValue(settings.getOutputType());
         srtDefInput.setValue(settings.getSrtDef());
         fileDefInput.setValue(settings.getFileDef());
         encoderInput.setValue(settings.getEncoder());
@@ -304,6 +360,7 @@ public class FFmpegGUI extends Application {
         settings.setVideoPID(videoPidField.getText());
         settings.setDelay(delayInput.getText());
         settings.setPixFormat(pixFormatInput.getValue());
+        settings.setOutputType(chooseBetweenUrlOrFileInput.getValue());
         settings.setSrtDef(srtDefInput.getValue());
         settings.setFileDef(fileDefInput.getValue());
         settings.setEncoder(encoderInput.getValue());
@@ -332,13 +389,13 @@ public class FFmpegGUI extends Application {
         tabPane.setPrefWidth(WINDOW_WIDTH-2);
 
         // Control and Console Tab
-        Tab controlConsoleTab = new Tab("Control and Console");
+        controlConsoleTab = new Tab("Control and Console");
         controlConsoleTab.setClosable(false);
         controlConsoleTab.setContent(buildTabControlConsole());
         tabPane.getTabs().add(controlConsoleTab);
 
         // Language Settings Tab
-        Tab settingTab = new Tab("Settings");
+        settingTab = new Tab("Settings");
         settingTab.setClosable(false);
         settingTab.setContent(buildTabSettings());
         tabPane.getTabs().add(settingTab);
@@ -350,7 +407,9 @@ public class FFmpegGUI extends Application {
         tabPane.getTabs().add(infoTab);
 
         root.getChildren().addAll(titleBox,tabPane);
-        return new ScrollPane(root);
+
+        mainSrollPane = new ScrollPane(root);
+        return mainSrollPane;
     }
 
     private Node buildTabInfo() {
@@ -428,8 +487,8 @@ public class FFmpegGUI extends Application {
 
     private Node buildTabControlConsole() {
         consoleOutputScrollPane = new ScrollPane(consoleOutputTextFlow);
-        consoleOutputScrollPane.setMinSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-250);
-        consoleOutputScrollPane.setMaxSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-250);
+        consoleOutputScrollPane.setMinSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-300);
+        consoleOutputScrollPane.setMaxSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-300);
         consoleOutputScrollPane.setFitToWidth(true); // Adjusts the width of the ScrollPane to fit its content
         consoleOutputScrollPane.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> manualScroll = true);
 
@@ -446,7 +505,10 @@ public class FFmpegGUI extends Application {
         streamRecorder.isAliveProperty().addListener(b->{
             if(streamRecorder.isAliveProperty().getValue()) {
                 Platform.runLater(()->{
-                    startButton.setText("Currently Playing");
+                    startButton.setDisable(true);
+                    if(isTheOutputAFile.getValue())  informationText.setValue("RECORDING ON LOCAL MACHINE IN PROGRESS");
+                    else informationText.setValue("LIVESTREAM IN PROGRESS");
+
                     blinkingTimeLine.play(); // Start the animation
                 });
             }
@@ -456,12 +518,7 @@ public class FFmpegGUI extends Application {
                     //(in the streamRecorder, we also wait 3s for the process to end before destroying it forcefully
                     PauseTransition delay = new PauseTransition(Duration.seconds(3)); // Pause for 3 seconds
                     delay.setOnFinished(event -> {
-                        stopButton.setGraphic(stopPath);
-                        stopButton.setDisable(true);
-                        startButton.setText("Start");
-                        blinkingTimeLine.stop();
-                        startButton.setStyle("");
-                        startButton.setDisable(streamRecorder.isAliveProperty().getValue());
+                        reinitialiseGraphicElements();
                     });
                     delay.play();
                 });
@@ -469,10 +526,28 @@ public class FFmpegGUI extends Application {
         });
 
         HBox buttonBox = new HBox(80, startButton, stopButton,clearOutputButton);
+        nowPlayingLabel.textProperty().bind(informationText);
+        nowPlayingLabel.setStyle("-fx-font-size: 24px;");
+
+        nowPlayingBox.setMinHeight(50);
+        nowPlayingBox.setMaxHeight(50);
+        nowPlayingBox.setMinWidth(WINDOW_WIDTH);
+        nowPlayingBox.setAlignment(Pos.CENTER);
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.setPadding(new Insets(20, 0, 20, 0));
         consoleBox.setPadding(new Insets(0,0,0,10));
-        return new VBox(10, buttonBox, consoleBox);
+        return new VBox(10, buttonBox, nowPlayingBox,consoleBox);
+    }
+
+    private void reinitialiseGraphicElements() {
+        manualScroll = false;
+        stopButton.setGraphic(stopPath);
+        if(isTheOutputAFile.getValue())  informationText.setValue("WAITING TO RECORD ON LOCAL MACHINE");
+        else informationText.setValue("WAITING TO LIVESTREAM");
+        stopButton.setDisable(true);
+        blinkingTimeLine.stop();
+        nowPlayingBox.setStyle("");
+        startButton.setDisable(streamRecorder.isAliveProperty().getValue());
     }
 
     private Node buildTabSettings() {
@@ -573,22 +648,86 @@ public class FFmpegGUI extends Application {
         inputGrid2.getColumnConstraints().addAll(col1, col2, col3,col4,col5,col6);
 
         row = 0;
-        Label outputinfoLabel = new Label("?");
-        outputinfoLabel.getStyleClass().add("info-for-tooltip");
+        Label chooseOutputTypeLabelInfo = new Label("?");
+        videoPIDinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltipA = new Tooltip("Choose if you want to livestream or either record in a file on the computer.");
+        Tooltip.install(chooseOutputTypeLabelInfo, tooltipA);
+        tooltipA.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltipA.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltipA.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltipA.getStyleClass().add("tooltip");
+        Label chooseOutputTypeLabel = new Label("Output type:");
+        // Create an HBox to hold both labels
+        HBox outPutTypeLabelHBox = new HBox(5);  // 5 is the spacing between the labels
+        Region spac = new Region();
+        spac.setMinWidth(54);
+        spac.setMaxWidth(54);
+        outPutTypeLabelHBox.getChildren().addAll(chooseOutputTypeLabel,chooseOutputTypeLabelInfo,spac,chooseBetweenUrlOrFileInput);
+        inputGrid2.add(outPutTypeLabelHBox, 0, row);
+        GridPane.setColumnSpan(outPutTypeLabelHBox, 6);
+        row++;
+
+
+        Label outputUrlinfoLabel = new Label("?");
+        outputUrlinfoLabel.getStyleClass().add("info-for-tooltip");
         Tooltip tooltipOutput = new Tooltip("Choose the output, either a srt stream copied and paste from the streaming platform, or a file. The SRT protocol support multiaudio track, but not the RTMP protool");
-        Tooltip.install(outputinfoLabel, tooltipOutput);
+        Tooltip.install(outputUrlinfoLabel, tooltipOutput);
         tooltipOutput.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
         tooltipOutput.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
         tooltipOutput.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
         tooltipOutput.getStyleClass().add("tooltip");
-        Label outputLabel = new Label("Output url:");
+        Label outputUrlLabel = new Label("Streaming url:");
         // Create an HBox to hold both labels
-        HBox outputHBox = new HBox(1,outputLabel,outputinfoLabel);
-        inputGrid2.add(outputHBox, 0, row);
-        inputGrid2.add(srtDestInput, 1, row);
+        outputUrlHBox.setSpacing(1);
+        outputUrlHBox.setMinWidth(WINDOW_WIDTH);
+        Region space = new Region();
+        space.setMinWidth(50);
+        space.setMaxWidth(50);
+        srtDestInput.setMinWidth(670);
         srtDestInput.setMaxWidth(670);
+        outputUrlHBox.getChildren().setAll(outputUrlLabel,outputUrlinfoLabel,space,srtDestInput);
+
+        inputGrid2.add(outputUrlHBox, 0, row);
+        GridPane.setColumnSpan(outputUrlHBox, 6);
         if(srtDestInput.getText()==null) srtDestInput.setText("");
-        GridPane.setColumnSpan(srtDestInput, 5);
+
+        Label outputDirectoryinfoLabel = new Label("?");
+        outputDirectoryinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltipOutputDirectory = new Tooltip("Choose the output directory, the files will be automatically named based on the date time of the start");
+        Tooltip.install(outputDirectoryinfoLabel, tooltipOutputDirectory);
+        tooltipOutputDirectory.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltipOutputDirectory.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltipOutputDirectory.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltipOutputDirectory.getStyleClass().add("tooltip");
+
+        Label outputFileLabel = new Label("Output directory:");
+        // Create an HBox to hold both labels
+        outputFileHBox.setSpacing(1);
+        Button pickDirectoryButton = new Button("Choose Directory");
+        pickDirectoryButton.setOnAction(event -> {
+            DirectoryChooser directoryChooser = new DirectoryChooser();
+            directoryChooser.setTitle("Select Directory");
+
+            // Show directory chooser dialog
+            File selectedDirectory = directoryChooser.showDialog(scene.getWindow());
+            if (selectedDirectory != null) {
+                outputFileInput.setText(selectedDirectory.getAbsolutePath());
+            }
+        });
+        Region spacer = new Region();
+        spacer.setMinWidth(32);
+        spacer.setMaxWidth(32);
+        outputFileInput.setMinWidth(600);
+        outputFileInput.setMaxWidth(600);
+        Region spacer2 = new Region();
+        spacer2.setMinWidth(20);
+        spacer2.setMaxWidth(20);
+        outputFileHBox.getChildren().setAll(outputFileLabel,outputDirectoryinfoLabel,spacer,outputFileInput,spacer2,pickDirectoryButton);
+        inputGrid2.add(outputFileHBox, 0, row);
+
+        if(outputFileInput.getText()==null) outputFileInput.setText("");
+        GridPane.setColumnSpan(outputFileHBox, 6);
+
         row++;
         Separator verticalSeparator = new Separator();
         inputGrid2.add(verticalSeparator,0,row);
@@ -840,7 +979,7 @@ public class FFmpegGUI extends Application {
     @Override
     public void start(Stage primaryStage) {
         ScrollPane pane = buildUI();
-        Scene scene = new Scene(pane, WINDOW_WIDTH, WINDOW_HEIGHT);
+        scene = new Scene(pane, WINDOW_WIDTH, WINDOW_HEIGHT);
         scene.getStylesheets().add("javafx@main.css");
         primaryStage.setScene(scene);
         primaryStage.setTitle("FFmpeg GUI");
@@ -849,6 +988,8 @@ public class FFmpegGUI extends Application {
             handleClose();
         });
         primaryStage.show();
+        applyStyleOnOutputTypeChange(isTheOutputAFile.get());
+
     }
 
     private void handleClose() {
@@ -862,9 +1003,9 @@ public class FFmpegGUI extends Application {
         displayPIDInfo();
         doWeAutomaticallyScrollAtBottom = true;
         streamRecorder.setSrtUrl(srtDestInput.getText());
+        streamRecorder.setOutputDirectory(outputFileInput.getText());
         streamRecorder.initialiseVideoDevice(videoInput.getValue());
-        streamRecorder.initialiseAudioDevices(Arrays.stream(audioInputs).map(ComboBox::getValue).toArray(String[]::new));
-        streamRecorder.initialiseAudioDevicesChannel(Arrays.stream(audioInputsChannel).map(ComboBox::getValue).toArray(String[]::new));
+        streamRecorder.initialiseAudioDevices(Arrays.stream(audioInputs).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(audioInputsChannel).map(ComboBox::getValue).toArray(String[]::new));
         streamRecorder.setPixelFormat(pixFormatInput.getValue());
         streamRecorder.setOutputResolution(srtDefInput.getValue());
         streamRecorder.setDelay(Integer.parseInt(delayInput.getText()));
@@ -874,6 +1015,7 @@ public class FFmpegGUI extends Application {
         streamRecorder.setAudioBufferSize(audioInputBuffer.getValue());
         streamRecorder.setVideoBitrate(videoBitrate.getValue());
         streamRecorder.setVideoBufferSize(videoInputBuffer.getValue());
+        streamRecorder.setIsTheOutputAFile(isTheOutputAFile.get());
         streamRecorder.setFps(Integer.parseInt(framePerSecond.getValue()));
         textAreaInfo.setText(streamRecorder.getFFMpegCommand());
         playerURLTextField.setText(buildPlayerURL());
@@ -887,7 +1029,7 @@ public class FFmpegGUI extends Application {
             // Your existing code for streamRecorder.run() goes here
             streamRecorder.setSrtUrl(srtDestInput.getText());
             streamRecorder.initialiseVideoDevice(videoInput.getValue());
-            streamRecorder.initialiseAudioDevices(Arrays.stream(audioInputs).map(ComboBox::getValue).toArray(String[]::new));
+            streamRecorder.initialiseAudioDevices(Arrays.stream(audioInputs).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(audioInputsChannel).map(ComboBox::getValue).toArray(String[]::new));
             try {
                 streamRecorder.run();
             } catch (Exception e) {
@@ -994,6 +1136,22 @@ public class FFmpegGUI extends Application {
             appendToConsole("Please Fill the Delay (See Tooltip for help)","",Color.RED);
             result= false;
         }
+        if(chooseBetweenUrlOrFileInput.getValue().equals("File")) {
+            String directory = outputFileInput.getText();
+            File file = new File(directory);
+            if (!file.isDirectory()) {
+                    appendToConsole(directory + " is not a directory. Please enter a valid directory for the file output.","",Color.RED);
+                    result = false;
+            }
+        }
+        else {
+            String url = srtDestInput.getText();
+            if (!url.startsWith("srt://")) {
+                appendToConsole(url + " is not a valid srt url. Please enter a valid srt url to stream.","",Color.RED);
+                return false;
+            }
+        }
+
         if(!result) {
             appendToConsole("--------------------------------------------","",Color.RED);
 

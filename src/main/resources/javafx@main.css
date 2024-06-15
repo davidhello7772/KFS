@@ -9,8 +9,24 @@
     -red-color: red;
     -red-color-hover: #de0000;
     -orange-color: #EE7130;
+    -output-is-file-bg-color: #DCF9F8;
 }
 
+.bg-light-blue {
+  -fx-background-color: -output-is-file-bg-color;
+}
+
+
+.bg-light-blue .tab-pane .tab {
+    -fx-background-color: #DCF3F9;
+}
+
+.bg-light-blue .tab-pane .tab-header-area .tab-header-background {
+     -fx-background-color: #DCEBF9;
+}
+.bg-light-blue .tab-pane .tab:selected {
+    -fx-background-color: -output-is-file-bg-color;
+}
 
 .event-button
 {
@@ -43,9 +59,6 @@
 .success-button {
     -fx-background-color: -green-color;
     -fx-text-fill: white;
-}
-.success-button:disabled {
-    -fx-opacity: 1; /* Keep full opacity */
 }
 
 .success-button:hover {
@@ -170,3 +183,7 @@
     -fx-text-fill: -blue-color;
     -fx-font-size: 14px;
 }
+
+
+
+

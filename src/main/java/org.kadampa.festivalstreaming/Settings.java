@@ -19,6 +19,7 @@ public class Settings implements Serializable {
     private String srtDef;
     private String fileDef;
     private String encoder;
+    private String outputType;
     private String srtDest;
     private String outputFile;
     private String audioBitrate; // Add audio bitrate field
@@ -53,6 +54,14 @@ public class Settings implements Serializable {
 
     public void setPixFormat(String pixFormat) {
         this.pixFormat = pixFormat;
+    }
+
+    public String getOutputType() {
+        return outputType;
+    }
+
+    public void setOutputType(String outputType) {
+        this.outputType = outputType;
     }
 
     public String getSrtDef() {

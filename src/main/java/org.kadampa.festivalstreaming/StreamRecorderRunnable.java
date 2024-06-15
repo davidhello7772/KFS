@@ -4,11 +4,12 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
-import javafx.scene.control.ComboBox;
 
+import java.io.File;
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
@@ -17,6 +18,8 @@ public class StreamRecorderRunnable implements Runnable {
 
     private Settings settings;
     private String srtUrl;
+    private String outputDirectory;
+
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();;
     private final List<String> audioInputsChannel = new ArrayList<>();
@@ -28,6 +31,8 @@ public class StreamRecorderRunnable implements Runnable {
     private String videoBitrate;
     private String videoBufferSize;
     private String audioBufferSize;
+    private boolean isTheOutputAFile;
+
     private int fps;
     private int delay;
     private Process process = null;
@@ -150,8 +155,18 @@ public class StreamRecorderRunnable implements Runnable {
 
         outputCommand.add("-r");
         outputCommand.add(String.valueOf(fps));
-        outputCommand.add("\""+srtUrl+"\"");
 
+        if(isTheOutputAFile) {
+            LocalDateTime now = LocalDateTime.now();
+            // Create a formatter to define the output format
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd ¦ HH-mm-ss");
+            String formattedDateTime = now.format(formatter);
+            String fileName = "recorded-video-"+formattedDateTime+".mp4";
+            outputCommand.add("\"" + outputDirectory + File.separatorChar + fileName + "\"");
+        }
+        else {
+            outputCommand.add("\"" + srtUrl + "\"");
+        }
         List<String> finalCommand = new ArrayList<>();
         finalCommand.add("ffmpeg");
         finalCommand.addAll(devicesListCommand);
@@ -175,17 +190,17 @@ public class StreamRecorderRunnable implements Runnable {
         }
     }
 
-    public void initialiseAudioDevices(String[] deviceNames) {
+    public void initialiseAudioDevices(String[] deviceNames,String[] channelInfos) {
         audioDevicesList.clear();
-        for (String deviceName : deviceNames) {
+        audioInputsChannel.clear();
+        for (int i = 0; i< deviceNames.length; i++) {
+            String deviceName = deviceNames[i];
+            String deviceInputChannel = channelInfos[i];
             if (!Objects.equals(deviceName, "Not Used")) {
                 audioDevicesList.add(deviceName);
+                audioInputsChannel.add(deviceInputChannel);
             }
         }
-    }
-    public void initialiseAudioDevicesChannel(String[] channelInfos) {
-        audioInputsChannel.clear();
-        audioInputsChannel.addAll(Arrays.asList(channelInfos));
     }
 
     public void initialiseVideoDevice(String deviceName) {
@@ -266,5 +281,21 @@ public class StreamRecorderRunnable implements Runnable {
 
     public void setAudioBufferSize(String audioBufferSize) {
         this.audioBufferSize = audioBufferSize;
+    }
+
+    public boolean isTheOutputAFile() {
+        return isTheOutputAFile;
+    }
+
+    public void setIsTheOutputAFile(boolean theOutputAFile) {
+        isTheOutputAFile = theOutputAFile;
+    }
+
+    public String getOutputDirectory() {
+        return outputDirectory;
+    }
+
+    public void setOutputDirectory(String outputDirectory) {
+        this.outputDirectory = outputDirectory;
     }
 }
