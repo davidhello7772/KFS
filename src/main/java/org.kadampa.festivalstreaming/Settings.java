@@ -6,13 +6,13 @@ import java.util.Map;
 
 public class Settings implements Serializable {
     private static final long serialVersionUID = 1L;
-    private final Map<String, String> audioInputs = new HashMap<>();
-    private final Map<String, String> audioInputsChannel = new HashMap<>();
+    private final Map<String, String> audioSources = new HashMap<>();
+    private final Map<String, String> audioSourcesChannel = new HashMap<>();
     private final Map<String, String> pids = new HashMap<>();
-    private String videoInput;
-    private String videoBitrateInput;
-    private String videoBufferInput;
-    private String audioBufferInput;
+    private String videoSource;
+    private String videoBitrate;
+    private String videoBuffer;
+    private String audioBuffer;
     private String videoPID;
     private String delay;
     private String pixFormat;
@@ -20,24 +20,24 @@ public class Settings implements Serializable {
     private String fileDef;
     private String encoder;
     private String outputType;
-    private String srtDest;
-    private String outputFile;
+    private String srtURL;
+    private String outputDirectory;
     private String audioBitrate; // Add audio bitrate field
     private String fps; // Add FPS field
 
-    public Map<String, String> getAudioInputs() {
-        return audioInputs;
+    public Map<String, String> getAudioSources() {
+        return audioSources;
     }
 
-    public Map<String, String> getAudioInputsChannel() {
-        return audioInputsChannel;
+    public Map<String, String> getAudioSourcesChannel() {
+        return audioSourcesChannel;
     }
-    public String getVideoInput() {
-        return videoInput;
+    public String getVideoSource() {
+        return videoSource;
     }
 
-    public void setVideoInput(String videoInput) {
-        this.videoInput = videoInput;
+    public void setVideoSource(String videoSource) {
+        this.videoSource = videoSource;
     }
 
     public String getDelay() {
@@ -88,20 +88,20 @@ public class Settings implements Serializable {
         this.encoder = encoder;
     }
 
-    public String getSrtDest() {
-        return srtDest;
+    public String getSrtURL() {
+        return srtURL;
     }
 
-    public void setSrtDest(String srtDest) {
-        this.srtDest = srtDest;
+    public void setSrtURL(String srtURL) {
+        this.srtURL = srtURL;
     }
 
-    public String getOutputFile() {
-        return outputFile;
+    public String getOutputDirectory() {
+        return outputDirectory;
     }
 
-    public void setOutputFile(String outputFile) {
-        this.outputFile = outputFile;
+    public void setOutputDirectory(String outputDirectory) {
+        this.outputDirectory = outputDirectory;
     }
 
     public String getAudioBitrate() {
@@ -128,27 +128,27 @@ public class Settings implements Serializable {
         this.videoPID = videoPID;
     }
 
-    public void setVideoBitrateInput(String videoBitrateInput) {
-        this.videoBitrateInput = videoBitrateInput;
+    public void setVideoBitrate(String videoBitrate) {
+        this.videoBitrate = videoBitrate;
     }
 
-    public void setVideoBufferInput(String videoBufferInput) {
-        this.videoBufferInput = videoBufferInput;
+    public void setVideoBuffer(String videoBuffer) {
+        this.videoBuffer = videoBuffer;
     }
 
-    public void setAudioBufferInput(String audioBufferInput) {
-        this.audioBufferInput = audioBufferInput;
+    public void setAudioBuffer(String audioBuffer) {
+        this.audioBuffer = audioBuffer;
     }
 
-    public String getVideoBitrateInput() {
-        return videoBitrateInput;
+    public String getVideoBitrate() {
+        return videoBitrate;
     }
 
-    public String getVideoBufferInput() {
-        return videoBufferInput;
+    public String getVideoBuffer() {
+        return videoBuffer;
     }
 
-    public String getAudioBufferInput() {
-        return audioBufferInput;
+    public String getAudioBuffer() {
+        return audioBuffer;
     }
 }
