@@ -310,11 +310,13 @@ public class FFmpegGUI extends Application {
             updateSceneStyle("light-blue");
             currentInformationTextProperty.setValue("WAITING TO RECORD");
             primaryStage.getIcons().setAll(iconRecordingIdle);
+            primaryStage.setTitle("Kadampa Festival - Recording the session");
         }
         else {
             updateSceneStyle("");
             currentInformationTextProperty.setValue("WAITING TO LIVESTREAM");
             primaryStage.getIcons().setAll(iconLiveStreamIdle);
+            primaryStage.setTitle("Kadampa Festival - Live stream the session");
         }
     }
 
@@ -412,7 +414,7 @@ public class FFmpegGUI extends Application {
 
         nowPlayingBox.setMinHeight(50);
         nowPlayingBox.setMaxHeight(50);
-        nowPlayingBox.setMinWidth(WINDOW_WIDTH);
+        nowPlayingBox.setMinWidth(WINDOW_WIDTH-5);
         nowPlayingBox.setAlignment(Pos.CENTER);
 
         TabPane tabPane = new TabPane();
