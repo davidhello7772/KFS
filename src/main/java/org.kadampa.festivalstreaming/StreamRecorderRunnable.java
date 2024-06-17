@@ -88,6 +88,7 @@ public class StreamRecorderRunnable implements Runnable {
 
         StringBuilder filterCommand = new StringBuilder();
         int i = 0;
+        int videoDelay=0;
         //The audio devices
         for(String audioDevice:audioDevicesList) {
             i++;
@@ -119,11 +120,13 @@ public class StreamRecorderRunnable implements Runnable {
                     mapCommand.add("\"[outright"+i+"]\"");
                 }
             }
-            //due to some ffmpeg obscure reason, each ffmpeg input is async of 600ms compare to the previous
+            //On ffmpeg, all the inout devices are opened in sequence, resulting in a delay between each one, so each ffmpeg input is async of 620ms compare to the previous one
             //input. so we adjust the delay here.
-            //TODO: test on linux if the pb if the same.
-            delay = delay+624;
+            //TODO: Check if the delay is the same for on all computer.
+            delay = delay+620;
+            videoDelay+=620;
         }
+        double videoDelayInS = videoDelay/1000.0;
         /*
          * settb=AVTB
          * settb stands for "set time base." The AVTB parameter is short for "audio-video time base." Here's what it does:
@@ -135,7 +138,9 @@ public class StreamRecorderRunnable implements Runnable {
          * STARTPTS: This is the PTS of the first frame in the stream.
          * setpts=PTS-STARTPTS adjusts the PTS of each frame so that the stream starts from zero. Here's what happens:
          */
-        filterCommand.append("[0:v]settb=AVTB,setpts=PTS-STARTPTS[vid]");
+
+        //Because of the audio async on each input, we have to delay the video
+        filterCommand.append("[0:v]settb=AVTB,setpts=PTS+").append(videoDelayInS).append("/TB[vid]");
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add("\""+ filterCommand +"\"");
         parameterCommand.add("-s");
