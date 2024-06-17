@@ -1,14 +1,15 @@
 package org.kadampa.festivalstreaming;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 
 public class Settings implements Serializable {
+    @Serial
     private static final long serialVersionUID = 1L;
     private final Map<String, String> audioSources = new HashMap<>();
     private final Map<String, String> audioSourcesChannel = new HashMap<>();
-    private final Map<String, String> pids = new HashMap<>();
     private String videoSource;
     private String videoBitrate;
     private String videoBuffer;

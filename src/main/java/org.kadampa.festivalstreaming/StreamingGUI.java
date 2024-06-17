@@ -41,7 +41,11 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class FFmpegGUI extends Application {
+public class StreamingGUI extends Application {
+    private static final String WAITING_TO_RECORD = "WAITING TO RECORD ON LOCAL MACHINE";
+    private static final String WAITING_TO_LIVESTREAM = "WAITING TO LIVESTREAM";
+    private static final String CURRENTLY_RECORDING = "RECORDING ON LOCAL MACHINE IN PROGRESS";
+    private static final String CURRENTLY_LIVESTREAMING ="LIVESTREAM IN PROGRESS";
     private final ComboBox<String>[] inputAudioSources;
     private final ComboBox<String>[] inputAudioSourcesChannel;
     private final TextField inputVideoPid;
@@ -106,7 +110,7 @@ public class FFmpegGUI extends Application {
     private final Image iconRecordingIdle = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-idle.png")));
     private final Image iconRecordingPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-playing.jpg")));
 
-    public FFmpegGUI() {
+    public StreamingGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
         inputAudioSources = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
         inputAudioSourcesChannel = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
@@ -308,13 +312,13 @@ public class FFmpegGUI extends Application {
     private void applyStyleOnOutputTypeChange(Boolean newValue) {
         if(newValue) {
             updateSceneStyle("light-blue");
-            currentInformationTextProperty.setValue("WAITING TO RECORD");
+            currentInformationTextProperty.setValue(WAITING_TO_RECORD);
             primaryStage.getIcons().setAll(iconRecordingIdle);
             primaryStage.setTitle("Kadampa Festival - Recording the session");
         }
         else {
             updateSceneStyle("");
-            currentInformationTextProperty.setValue("WAITING TO LIVESTREAM");
+            currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM);
             primaryStage.getIcons().setAll(iconLiveStreamIdle);
             primaryStage.setTitle("Kadampa Festival - Live stream the session");
         }
@@ -538,8 +542,8 @@ public class FFmpegGUI extends Application {
             if(streamRecorder.isAliveProperty().getValue()) {
                 Platform.runLater(()->{
                     startButton.setDisable(true);
-                    if(isTheOutputAFile.getValue())  currentInformationTextProperty.setValue("RECORDING ON LOCAL MACHINE IN PROGRESS");
-                    else currentInformationTextProperty.setValue("LIVESTREAM IN PROGRESS");
+                    if(isTheOutputAFile.getValue())  currentInformationTextProperty.setValue(CURRENTLY_RECORDING);
+                    else currentInformationTextProperty.setValue(CURRENTLY_LIVESTREAMING);
 
                     blinkingTimeLine.play(); // Start the animation
                 });
@@ -565,12 +569,16 @@ public class FFmpegGUI extends Application {
     private void reinitialiseGraphicElements() {
         manualScroll = false;
         stopButton.setGraphic(stopPath);
-        if(isTheOutputAFile.getValue())  currentInformationTextProperty.setValue("WAITING TO RECORD ON LOCAL MACHINE");
-        else currentInformationTextProperty.setValue("WAITING TO LIVESTREAM");
+        if(isTheOutputAFile.getValue())  currentInformationTextProperty.setValue(WAITING_TO_RECORD);
+        else currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM);
         stopButton.setDisable(true);
         blinkingTimeLine.stop();
         nowPlayingBox.setStyle("");
         startButton.setDisable(streamRecorder.isAliveProperty().getValue());
+        if(isTheOutputAFile.get())
+            primaryStage.getIcons().setAll(iconRecordingIdle);
+        else
+            primaryStage.getIcons().setAll(iconLiveStreamIdle);
     }
 
     private Node buildTabSettings() {

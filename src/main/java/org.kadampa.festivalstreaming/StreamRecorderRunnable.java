@@ -16,12 +16,11 @@ import java.util.concurrent.Executors;
 
 public class StreamRecorderRunnable implements Runnable {
 
-    private Settings settings;
     private String srtUrl;
     private String outputDirectory;
 
     private String videoDevice;
-    private final List<String> audioDevicesList = new ArrayList<>();;
+    private final List<String> audioDevicesList = new ArrayList<>();
     private final List<String> audioInputsChannel = new ArrayList<>();
 
     private String outputResolution;
@@ -44,9 +43,7 @@ public class StreamRecorderRunnable implements Runnable {
     public StreamRecorderRunnable() {
 
     }
-    public void setSettings(Settings settings) {
-        this.settings = settings;
-    }
+
     @Override
     public void run() {
        List<String> command = initialiseFFMpegCommand();
@@ -58,7 +55,7 @@ public class StreamRecorderRunnable implements Runnable {
             StreamGobbler errorStreamGobbler = new StreamGobbler(process.getErrorStream(), outputLineProperty::setValue);
             Executors.newSingleThreadExecutor().submit(inputStreamGobbler);
             Executors.newSingleThreadExecutor().submit(errorStreamGobbler);
-            int exitCode = process.waitFor();
+            process.waitFor();
         } catch (IOException | InterruptedException e) {
             if(monitor!=null) monitor.stopMonitoring();
             stop();
@@ -78,7 +75,6 @@ public class StreamRecorderRunnable implements Runnable {
         List<String> filterComplexCommand = new ArrayList<>();
         List<String> mapCommand = new ArrayList<>();
         List<String> parameterCommand = new ArrayList<>();
-        List<String> streamIdCommand = new ArrayList<>();
         List<String> outputCommand = new ArrayList<>();
         //The video device
         devicesListCommand.add("-rtbufsize");
@@ -89,8 +85,7 @@ public class StreamRecorderRunnable implements Runnable {
         devicesListCommand.add("\"video=" + videoDevice+"\"");
         mapCommand.add("-map");
         mapCommand.add("\"[vid]\"");
-        streamIdCommand.add("-streamid");
-        streamIdCommand.add("0:"+ videoPid);
+
         StringBuilder filterCommand = new StringBuilder();
         int i = 0;
         //The audio devices
@@ -103,34 +98,43 @@ public class StreamRecorderRunnable implements Runnable {
             devicesListCommand.add("-i");
             devicesListCommand.add("\"audio=" + audioDevice+"\"");
             if(audioInputsChannel.get(i-1).equals("Join")) {
-                filterCommand.append("[").append(i).append(":a]adelay=").append(delay).append("|").append(delay).append("[out").append(i).append("];");
+                //command to sync all the audio output
+
+                filterCommand.append("[").append(i).append(":a]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[out").append(i).append("];");
+
                 mapCommand.add("-map");
                 mapCommand.add("\"[out"+i+"]\"");
-                streamIdCommand.add("-streamid");
-                int audioPid = videoPid +i;
-                streamIdCommand.add(i+":"+ audioPid);
             }
             else {
                 filterCommand.append("[").append(i).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
                 if(audioInputsChannel.get(i-1).equals("Left")) {
                     filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[outleft").append(i).append("];");
+
                     mapCommand.add("-map");
                     mapCommand.add("\"[outleft"+i+"]\"");
-                    streamIdCommand.add("-streamid");
-                    int audioPid = videoPid +i;
-                    streamIdCommand.add(i+":"+ audioPid);
                 }
                 if(audioInputsChannel.get(i-1).equals("Right")) {
                     filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[outright").append(i).append("];");
                     mapCommand.add("-map");
                     mapCommand.add("\"[outright"+i+"]\"");
-                    streamIdCommand.add("-streamid");
-                    int audioPid = videoPid +i;
-                    streamIdCommand.add(i+":"+ audioPid);
                 }
             }
-
+            //due to some ffmpeg obscure reason, each ffmpeg input is async of 600ms compare to the previous
+            //input. so we adjust the delay here.
+            //TODO: test on linux if the pb if the same.
+            delay = delay+624;
         }
+        /*
+         * settb=AVTB
+         * settb stands for "set time base." The AVTB parameter is short for "audio-video time base." Here's what it does:
+         * Time Base (tb): In FFmpeg, the time base represents the fundamental unit of time (in seconds) in terms of which frame timestamps are represented. A lower time base can represent smaller time intervals.
+         * AVTB: This sets the time base to the standard audio-video time base used by FFmpeg. Essentially, it aligns the time base of the stream to the default time base used for audio and video.
+         * setpts=PTS-STARTPTS
+         * setpts stands for "set presentation timestamp." PTS and STARTPTS are key components here:
+         * PTS (Presentation Timestamp): The PTS represents the exact time at which a particular frame should be presented to the viewer. Each frame in a video stream has a unique PTS.
+         * STARTPTS: This is the PTS of the first frame in the stream.
+         * setpts=PTS-STARTPTS adjusts the PTS of each frame so that the stream starts from zero. Here's what happens:
+         */
         filterCommand.append("[0:v]settb=AVTB,setpts=PTS-STARTPTS[vid]");
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add("\""+ filterCommand +"\"");
@@ -146,10 +150,22 @@ public class StreamRecorderRunnable implements Runnable {
         parameterCommand.add("aac");
         parameterCommand.add("-b:a");
         parameterCommand.add(audioBitrate);
+        /*
+         * MPEG Transport Stream (MPEG-TS) is a standard digital container format used for transmission and storage of audio, video, and data.
+         * It is defined by the MPEG-2 Part 1 specification (ISO/IEC standard 13818-1).
+         * MPEG-TS is designed to address issues such as error correction and synchronization for streaming media.
+         */
         parameterCommand.add("-f");
         parameterCommand.add("mpegts");
+        /*
+         * -mpegts_flags +initial_discontinuity
+         * This flag is used to handle initial discontinuities in the stream.
+         * A discontinuity occurs when there is a gap or an unexpected jump in the timestamps of the packets within the stream.
+         * This can happen, for instance, when starting a live stream or switching between different sources.
+         */
         parameterCommand.add("-mpegts_flags");
         parameterCommand.add("+initial_discontinuity");
+
         parameterCommand.add("-mpegts_start_pid");
         parameterCommand.add(String.valueOf(videoPid));
 
@@ -159,7 +175,7 @@ public class StreamRecorderRunnable implements Runnable {
         if(isTheOutputAFile) {
             LocalDateTime now = LocalDateTime.now();
             // Create a formatter to define the output format
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd ¦ HH-mm-ss");
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd ¦ HH mm-ss");
             String formattedDateTime = now.format(formatter);
             String fileName = "recorded-video-"+formattedDateTime+".mp4";
             outputCommand.add("\"" + outputDirectory + File.separatorChar + fileName + "\"");
@@ -173,11 +189,6 @@ public class StreamRecorderRunnable implements Runnable {
         finalCommand.addAll(filterComplexCommand);
         finalCommand.addAll(mapCommand);
         finalCommand.addAll(parameterCommand);
-
-        //Not needed:  Relationship Between -mpegts_start_pid and -streamid:
-        //Default Behavior: If you only use -mpegts_start_pid, streams will be assigned PIDs starting from this value in a sequential manner (37, 38, 39, ...).
-        //Custom Mapping: By using -streamid, you can override this default sequential assignment and specify exact PIDs for each stream. This allows you more control over the PID allocation.
-        //finalCommand.addAll(streamIdCommand);
 
         finalCommand.addAll(outputCommand);
         return finalCommand;
@@ -208,16 +219,13 @@ public class StreamRecorderRunnable implements Runnable {
     }
     private void destroyProcessAndChildren(Process process) {
         ProcessHandle processHandle = process.toHandle();
-        processHandle.descendants().forEach(ph -> {
-                    ph.destroy();
-                    //outputLineProperty.setValue("Stopping child process");
-                });
+        processHandle.descendants().forEach(ProcessHandle::destroy);
         process.destroy();
-        //outputLineProperty.setValue("Stopping parent process");
         try {
             Thread.sleep(3000); // Wait for 5 seconds
         } catch (InterruptedException e) {
             e.printStackTrace();
+            outputLineProperty.setValue(e.toString());
         }
 
         processHandle.descendants().forEach(ph -> {
@@ -283,16 +291,8 @@ public class StreamRecorderRunnable implements Runnable {
         this.audioBufferSize = audioBufferSize;
     }
 
-    public boolean isTheOutputAFile() {
-        return isTheOutputAFile;
-    }
-
     public void setIsTheOutputAFile(boolean theOutputAFile) {
         isTheOutputAFile = theOutputAFile;
-    }
-
-    public String getOutputDirectory() {
-        return outputDirectory;
     }
 
     public void setOutputDirectory(String outputDirectory) {

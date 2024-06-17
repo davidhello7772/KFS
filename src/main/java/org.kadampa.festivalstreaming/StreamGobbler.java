@@ -25,7 +25,4 @@ class StreamGobbler implements Runnable {
         completed = true;
     }
 
-    public boolean isCompleted() {
-        return completed;
-    }
 }
