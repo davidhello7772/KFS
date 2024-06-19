@@ -68,6 +68,7 @@ public class StreamingGUI extends Application {
     private final Button stopButton;
     private final Button clearOutputButton;
     private final StringProperty currentInformationTextProperty = new SimpleStringProperty();
+    private final TextField inputTimeNeededToOpenADevice;
     private Thread encodingThread;
     private final StreamRecorderRunnable streamRecorder = new StreamRecorderRunnable();
     private final Settings settings;
@@ -109,6 +110,9 @@ public class StreamingGUI extends Application {
     private final Image iconLiveStreamPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/live-streaming-playing.jpg")));
     private final Image iconRecordingIdle = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-idle.png")));
     private final Image iconRecordingPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-playing.jpg")));
+
+    private int firstOpeningDeviceStartupTime = 0;
+    private int secondOpeningDeviceStartupTime = 0;
 
     public StreamingGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
@@ -179,6 +183,7 @@ public class StreamingGUI extends Application {
             if(controlConsoleTab!=null) {
                 applyStyleOnOutputTypeChange(newValue);}});
 
+        inputTimeNeededToOpenADevice = new TextField();
         inputSrtURL = new TextField();
         inputOutputDirectory = new TextField();
         outputFileHBox.visibleProperty().bind(isTheOutputAFile);
@@ -368,6 +373,7 @@ public class StreamingGUI extends Application {
         inputOutputFileResolution.setValue(settings.getFileDef());
         inputEncoder.setValue(settings.getEncoder());
         inputSrtURL.setText(settings.getSrtURL());
+        inputTimeNeededToOpenADevice.setText(settings.getTimeNeededToOpenADevice());
         inputOutputDirectory.setText(settings.getOutputDirectory());
         inputAudioBitrate.setValue(settings.getAudioBitrate());
         inputFramePerSecond.setValue(settings.getFps());
@@ -392,6 +398,7 @@ public class StreamingGUI extends Application {
         settings.setFileDef(inputOutputFileResolution.getValue());
         settings.setEncoder(inputEncoder.getValue());
         settings.setSrtURL(inputSrtURL.getText());
+        settings.setTimeNeededToOpenADevice(inputTimeNeededToOpenADevice.getText());
         settings.setOutputDirectory(inputOutputDirectory.getText());
         settings.setAudioBitrate(inputAudioBitrate.getValue());
         settings.setFps(inputFramePerSecond.getValue());
@@ -695,9 +702,27 @@ public class StreamingGUI extends Application {
         spac.setMaxWidth(54);
         outPutTypeLabelHBox.getChildren().addAll(chooseOutputTypeLabel,chooseOutputTypeLabelInfo,spac, inputChooseBetweenUrlOrFile);
         inputGrid2.add(outPutTypeLabelHBox, 0, row);
-        GridPane.setColumnSpan(outPutTypeLabelHBox, 6);
-        row++;
+        GridPane.setColumnSpan(outPutTypeLabelHBox, 3);
 
+        Label timeNeededinfoLabel = new Label("?");
+        timeNeededinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltipTimeNeededOutput = new Tooltip("The time needed to open an audio device. This is important because each audio device takes time to open so it it async the audios.\n" +
+                "This parameter is used to readjust the sync. To know this value, in the ffmeg output, look for the start value for device 1 and for device 2, and look for the difference.\n Usually, it's around 650ms");
+        Tooltip.install(timeNeededinfoLabel, tooltipTimeNeededOutput);
+        tooltipTimeNeededOutput.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltipTimeNeededOutput.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltipTimeNeededOutput.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltipTimeNeededOutput.getStyleClass().add("tooltip");
+        Label timeNeededLabel = new Label("Time needed to open a device (in ms):");
+        HBox outputTimeNeededLabelHBox = new HBox(5);  // 5 is the spacing between the labels
+        Region spac2 = new Region();
+        spac.setMinWidth(54);
+        spac.setMaxWidth(54);
+        inputTimeNeededToOpenADevice.setMaxWidth(50);
+        outputTimeNeededLabelHBox.getChildren().addAll(timeNeededLabel,timeNeededinfoLabel,spac2, inputTimeNeededToOpenADevice);
+        inputGrid2.add(outputTimeNeededLabelHBox, 3, row);
+        GridPane.setColumnSpan(outputTimeNeededLabelHBox, 3);
+        row++;
 
         Label outputUrlinfoLabel = new Label("?");
         outputUrlinfoLabel.getStyleClass().add("info-for-tooltip");
@@ -1058,6 +1083,7 @@ public class StreamingGUI extends Application {
         streamRecorder.setDelay(Integer.parseInt(inputSoundDelay.getText()));
         streamRecorder.setVideoPid(Integer.parseInt(inputVideoPid.getText()));
         streamRecorder.setEncoder(inputEncoder.getValue());
+        streamRecorder.setTimeNeededToOpenADevice(Integer.parseInt(inputTimeNeededToOpenADevice.getText()));
         streamRecorder.setAudioBitrate(inputAudioBitrate.getValue());
         streamRecorder.setAudioBufferSize(inputAudioSourceBuffer.getValue());
         streamRecorder.setVideoBitrate(inputVideoBitrate.getValue());
@@ -1173,6 +1199,17 @@ public class StreamingGUI extends Application {
             appendToConsole("Please Fill the Delay (See Tooltip for help)","",Color.RED);
             result= false;
         }
+        try {
+            Integer.parseInt(inputTimeNeededToOpenADevice.getText());
+        }
+        catch (NumberFormatException e){
+            appendToConsole("The Time needed to open a device Field must be an integer number (See Tooltip for help).","",Color.RED);
+            result= false;
+        }
+        if(inputSoundDelay.getText().isEmpty()) {
+            appendToConsole("Please Fill the Time needed to open a device Field (See Tooltip for help)","",Color.RED);
+            result= false;
+        }
         if(inputChooseBetweenUrlOrFile.getValue().equals("File")) {
             String directory = inputOutputDirectory.getText();
             File file = new File(directory);
@@ -1225,7 +1262,7 @@ public class StreamingGUI extends Application {
         if (color!=null) {
             text.setFill(color);
         }
-        String[] infoTerms = {"Info:", "Command:"};
+        String[] infoTerms = {"start:"};
         String[] errorTerms = {"error", "fatal", "Failed", "Invalid", "Unable","dropped","failed","Incompatible"};
         String[] warningTerms = {"ignored","deprecated","unsupported", "Could not","Deprecated","incorrect","confused"};
         String infoRegex = String.join("|", infoTerms);
@@ -1238,7 +1275,26 @@ public class StreamingGUI extends Application {
         Matcher warningMatcher = warningPattern.matcher(newLine);
         Matcher errorMatcher = errorPattern.matcher(newLine);
 
-        if (info.find()) text.setFill(Color.BLUE);
+        if (info.find()) {
+            text.setFill(Color.BLUE);
+            int startIndex = text.toString().indexOf("start: ");
+            int endIndex = text.toString().indexOf(",", startIndex);
+            if (startIndex != -1 && endIndex != -1) {
+                String startTime = text.toString().substring(startIndex+ "start: ".length(), endIndex);
+                if (firstOpeningDeviceStartupTime == 0) {
+                    firstOpeningDeviceStartupTime = (int) (Double.parseDouble(startTime) * 1000);
+                }
+                if (secondOpeningDeviceStartupTime == 0) {
+                    secondOpeningDeviceStartupTime = (int) (Double.parseDouble(startTime) * 1000);
+                     }
+                else {
+                    firstOpeningDeviceStartupTime = secondOpeningDeviceStartupTime;
+                    secondOpeningDeviceStartupTime = (int) (Double.parseDouble(startTime) * 1000);
+                }
+                int timeToOpen = secondOpeningDeviceStartupTime-firstOpeningDeviceStartupTime;
+                appendToConsole("Time to open the device: " + timeToOpen+" ms","",Color.RED );
+            }
+        }
         if (warningMatcher.find()) text.setFill(Color.ORANGE);
         if (errorMatcher.find()) text.setFill(Color.RED);
 

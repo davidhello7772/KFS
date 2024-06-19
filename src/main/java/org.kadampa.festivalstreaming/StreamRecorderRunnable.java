@@ -9,9 +9,7 @@ import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.Executors;
 
 public class StreamRecorderRunnable implements Runnable {
@@ -34,6 +32,7 @@ public class StreamRecorderRunnable implements Runnable {
 
     private int fps;
     private int delay;
+    private int timeNeededToOpenADevice;
     private Process process = null;
     private final StringProperty outputLineProperty = new SimpleStringProperty();
     private ProcessMonitor monitor;
@@ -84,63 +83,61 @@ public class StreamRecorderRunnable implements Runnable {
         devicesListCommand.add("-i");
         devicesListCommand.add("\"video=" + videoDevice+"\"");
         mapCommand.add("-map");
-        mapCommand.add("\"[vid]\"");
+        //The device 0 is the video input
+        mapCommand.add("0:v");
 
         StringBuilder filterCommand = new StringBuilder();
         int i = 0;
+        int j = 0;
         int videoDelay=0;
+        int audioDelay = delay;
+
         //The audio devices
+        Map<String,Integer> alreadyOpenedAudioDevices = new LinkedHashMap<>();
         for(String audioDevice:audioDevicesList) {
             i++;
-            devicesListCommand.add("-rtbufsize");
-            devicesListCommand.add(audioBufferSize);
-            devicesListCommand.add("-f");
-            devicesListCommand.add("dshow");
-            devicesListCommand.add("-i");
-            devicesListCommand.add("\"audio=" + audioDevice+"\"");
+            //Here we open the devices just one time for each device
+            //we do this because it takes time to open each device and we have to sync all the audios and videos
+            //together.
+            if(!alreadyOpenedAudioDevices.containsKey(audioDevice)) {
+                j++;
+                devicesListCommand.add("-rtbufsize");
+                devicesListCommand.add(audioBufferSize);
+                devicesListCommand.add("-f");
+                devicesListCommand.add("dshow");
+                devicesListCommand.add("-i");
+                devicesListCommand.add("\"audio=" + audioDevice + "\"");
+                alreadyOpenedAudioDevices.put(audioDevice,j);
+                if(j>1) {
+                    audioDelay = audioDelay + timeNeededToOpenADevice;
+                }
+            }
+
+            int deviceNumber = alreadyOpenedAudioDevices.get(audioDevice);
+
             if(audioInputsChannel.get(i-1).equals("Join")) {
                 //command to sync all the audio output
-
-                filterCommand.append("[").append(i).append(":a]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[out").append(i).append("];");
+                filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[out").append(i).append("];");
 
                 mapCommand.add("-map");
                 mapCommand.add("\"[out"+i+"]\"");
             }
             else {
-                filterCommand.append("[").append(i).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
+                filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
                 if(audioInputsChannel.get(i-1).equals("Left")) {
-                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[outleft").append(i).append("];");
+                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[outleft").append(i).append("];");
 
                     mapCommand.add("-map");
                     mapCommand.add("\"[outleft"+i+"]\"");
                 }
                 if(audioInputsChannel.get(i-1).equals("Right")) {
-                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(delay).append("|").append(delay).append(",pan=mono|c0=c0[outright").append(i).append("];");
+                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[outright").append(i).append("];");
                     mapCommand.add("-map");
                     mapCommand.add("\"[outright"+i+"]\"");
                 }
             }
-            //On ffmpeg, all the inout devices are opened in sequence, resulting in a delay between each one, so each ffmpeg input is async of 620ms compare to the previous one
-            //input. so we adjust the delay here.
-            //TODO: Check if the delay is the same for on all computer.
-            delay = delay+620;
-            videoDelay+=620;
         }
-        double videoDelayInS = videoDelay/1000.0;
-        /*
-         * settb=AVTB
-         * settb stands for "set time base." The AVTB parameter is short for "audio-video time base." Here's what it does:
-         * Time Base (tb): In FFmpeg, the time base represents the fundamental unit of time (in seconds) in terms of which frame timestamps are represented. A lower time base can represent smaller time intervals.
-         * AVTB: This sets the time base to the standard audio-video time base used by FFmpeg. Essentially, it aligns the time base of the stream to the default time base used for audio and video.
-         * setpts=PTS-STARTPTS
-         * setpts stands for "set presentation timestamp." PTS and STARTPTS are key components here:
-         * PTS (Presentation Timestamp): The PTS represents the exact time at which a particular frame should be presented to the viewer. Each frame in a video stream has a unique PTS.
-         * STARTPTS: This is the PTS of the first frame in the stream.
-         * setpts=PTS-STARTPTS adjusts the PTS of each frame so that the stream starts from zero. Here's what happens:
-         */
 
-        //Because of the audio async on each input, we have to delay the video
-        filterCommand.append("[0:v]settb=AVTB,setpts=PTS+").append(videoDelayInS).append("/TB[vid]");
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add("\""+ filterCommand +"\"");
         parameterCommand.add("-s");
@@ -302,5 +299,13 @@ public class StreamRecorderRunnable implements Runnable {
 
     public void setOutputDirectory(String outputDirectory) {
         this.outputDirectory = outputDirectory;
+    }
+
+    public int getTimeNeededToOpenADevice() {
+        return timeNeededToOpenADevice;
+    }
+
+    public void setTimeNeededToOpenADevice(int timeNeededToOpenADevice) {
+        this.timeNeededToOpenADevice = timeNeededToOpenADevice;
     }
 }

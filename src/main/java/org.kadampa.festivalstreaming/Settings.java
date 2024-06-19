@@ -17,6 +17,7 @@ public class Settings implements Serializable {
     private String videoPID;
     private String delay;
     private String pixFormat;
+    private String timeNeededToOpenADevice;
     private String srtDef;
     private String fileDef;
     private String encoder;
@@ -151,5 +152,13 @@ public class Settings implements Serializable {
 
     public String getAudioBuffer() {
         return audioBuffer;
+    }
+
+    public String getTimeNeededToOpenADevice() {
+        return timeNeededToOpenADevice;
+    }
+
+    public void setTimeNeededToOpenADevice(String timeNeededToOpenADevice) {
+        this.timeNeededToOpenADevice = timeNeededToOpenADevice;
     }
 }
