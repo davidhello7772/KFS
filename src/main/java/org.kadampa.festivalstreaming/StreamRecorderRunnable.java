@@ -146,12 +146,17 @@ public class StreamRecorderRunnable implements Runnable {
         parameterCommand.add(encoder);
         parameterCommand.add("-b:v");
         parameterCommand.add(videoBitrate);
+        parameterCommand.add("-minrate:v");
+        parameterCommand.add(videoBitrate);
+        parameterCommand.add("-maxrate:v");
+        parameterCommand.add(videoBitrate);
         parameterCommand.add("-pix_fmt");
         parameterCommand.add(pixelFormat);
         parameterCommand.add("-c:a");
         parameterCommand.add("aac");
         parameterCommand.add("-b:a");
         parameterCommand.add(audioBitrate);
+
         /*
          * MPEG Transport Stream (MPEG-TS) is a standard digital container format used for transmission and storage of audio, video, and data.
          * It is defined by the MPEG-2 Part 1 specification (ISO/IEC standard 13818-1).

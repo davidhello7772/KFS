@@ -1217,6 +1217,16 @@ public class StreamingGUI extends Application {
                     appendToConsole(directory + " is not a directory. Please enter a valid directory for the file output.","",Color.RED);
                     result = false;
             }
+            else {
+                long usableSpace = file.getUsableSpace();
+                int usableSpaceInGB = (int) (usableSpace / (1024.0 * 1024.0 * 1024.0));
+                int minimumGBNecessary = 15;
+                if(usableSpaceInGB <minimumGBNecessary) {
+                    appendToConsole("There is less than " +minimumGBNecessary+"GB available on the disk (" + usableSpaceInGB + " GB available). Free some space before recording", "", Color.RED);
+                    // Convert bytes to a more readable format (e.g., megabytes, gigabytes)
+                    result = false;
+                }
+            }
         }
         else {
             String url = inputSrtURL.getText();
