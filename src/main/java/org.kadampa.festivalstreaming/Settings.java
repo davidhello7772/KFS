@@ -10,6 +10,7 @@ public class Settings implements Serializable {
     private static final long serialVersionUID = 1L;
     private final Map<String, String> audioSources = new HashMap<>();
     private final Map<String, String> audioSourcesChannel = new HashMap<>();
+    private final Map<String,String> noiseReductionLevel = new HashMap<>();
     private String videoSource;
     private String videoBitrate;
     private String videoBuffer;
@@ -26,6 +27,7 @@ public class Settings implements Serializable {
     private String outputDirectory;
     private String audioBitrate; // Add audio bitrate field
     private String fps; // Add FPS field
+    private String enMixDelay;
 
     public Map<String, String> getAudioSources() {
         return audioSources;
@@ -34,6 +36,10 @@ public class Settings implements Serializable {
     public Map<String, String> getAudioSourcesChannel() {
         return audioSourcesChannel;
     }
+    public Map<String, String> getNoiseReductionLevel() {
+        return noiseReductionLevel;
+    }
+
     public String getVideoSource() {
         return videoSource;
     }
@@ -44,6 +50,13 @@ public class Settings implements Serializable {
 
     public String getDelay() {
         return delay;
+    }
+    public String getEnMixDelay() {
+        return enMixDelay;
+    }
+
+    public void setEnMixDelay(String delay) {
+        enMixDelay = delay;
     }
 
     public void setDelay(String delay) {

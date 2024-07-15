@@ -4,6 +4,7 @@ module org.kadampa.festivalstreaming {
     requires java.desktop;
     requires webcam.capture;
     requires com.google.gson;
+    requires javafx.media;
 
     opens org.kadampa.festivalstreaming to com.google.gson;
     exports org.kadampa.festivalstreaming;

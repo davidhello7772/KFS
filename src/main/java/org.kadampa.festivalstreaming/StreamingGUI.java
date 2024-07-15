@@ -23,6 +23,8 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Text;
@@ -38,6 +40,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -48,7 +51,9 @@ public class StreamingGUI extends Application {
     private static final String CURRENTLY_LIVESTREAMING ="LIVESTREAM IN PROGRESS";
     private final ComboBox<String>[] inputAudioSources;
     private final ComboBox<String>[] inputAudioSourcesChannel;
+    private final ComboBox<String>[] inputNoiseReductionValues;
     private final TextField inputVideoPid;
+    private final TextField inputenMixDelay;
     private final ComboBox<String> inputVideoSource;
     private final ComboBox<String> inputVideoSourceBuffer;
     private final ComboBox<String> inputAudioSourceBuffer;
@@ -110,22 +115,30 @@ public class StreamingGUI extends Application {
     private final Image iconLiveStreamPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/live-streaming-playing.jpg")));
     private final Image iconRecordingIdle = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-idle.png")));
     private final Image iconRecordingPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-playing.jpg")));
-
+    private String bgColor = "-green-color";
     private int firstOpeningDeviceStartupTime = 0;
     private int secondOpeningDeviceStartupTime = 0;
+    private boolean playingError;
 
     public StreamingGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
         inputAudioSources = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
         inputAudioSourcesChannel = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
+        inputNoiseReductionValues = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
+
         for (int i = 0; i < inputAudioSources.length; i++) {
             inputAudioSources[i] = new ComboBox<>();
             inputAudioSourcesChannel[i] = new ComboBox<>();
+            inputNoiseReductionValues[i] = new ComboBox<>();
         }
+        playingError = false;
         inputVideoSource = new ComboBox<>();
         inputVideoPid = new TextField();
         inputVideoPid.setText("37");
         inputVideoPid.setMaxWidth(75);
+        inputenMixDelay = new TextField();
+        inputenMixDelay.setText("0");
+        inputenMixDelay.setMaxWidth(75);
         inputSoundDelay = new TextField();
         inputSoundDelay.setText("0");
         inputAudioBitrate = new ComboBox<>();
@@ -196,13 +209,14 @@ public class StreamingGUI extends Application {
         blinkingTimeLine = new Timeline(
                 new KeyFrame(Duration.seconds(0.2), e -> {
                     nowPlayingBox.setStyle("");
+                    bgColor = "-green-color";
                     if(isTheOutputAFile.get())
                         primaryStage.getIcons().setAll(iconRecordingIdle);
                     else
                         primaryStage.getIcons().setAll(iconLiveStreamIdle);
                 }),
                 new KeyFrame(Duration.seconds(1), e -> {
-                    nowPlayingBox.setStyle("-fx-background-color: -red-color;");
+                    nowPlayingBox.setStyle("-fx-background-color: "+bgColor+";");
                     if(isTheOutputAFile.get())
                         primaryStage.getIcons().setAll(iconRecordingPlaying);
                     else
@@ -304,6 +318,9 @@ public class StreamingGUI extends Application {
             audioInputChannel.getItems().add("Left");
             audioInputChannel.getItems().add("Right");
             }
+        for (ComboBox<String> noiseReductionInput : inputNoiseReductionValues) {
+            noiseReductionInput.getItems().addAll("0","1","2","3");
+        }
 
         List<Webcam> webcams = Webcam.getWebcams();
         for (Webcam webcam : webcams) {
@@ -350,6 +367,10 @@ public class StreamingGUI extends Application {
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
             inputAudioSourcesChannel[i].setValue(settings.getAudioSourcesChannel().getOrDefault("audioChannel" + i, ""));
              }
+        for (int i = 0; i < inputNoiseReductionValues.length; i++) {
+            inputNoiseReductionValues[i].setValue(settings.getNoiseReductionLevel().getOrDefault("noiseReductionLevel" + i, "0"));
+        }
+
         for (int i = 0; i < inputAudioSources.length; i++) {
             if(Objects.equals(inputAudioSources[i].getValue(), "")) {
                 inputAudioSources[i].setValue("Not Used");
@@ -358,9 +379,11 @@ public class StreamingGUI extends Application {
             if(Objects.equals(inputAudioSources[i].getValue(), "Not Used")) {
                 inputAudioSourcesChannel[i].setValue("Join");
                 inputAudioSourcesChannel[i].setDisable(true);
+                inputNoiseReductionValues[i].setValue("0");
+                inputNoiseReductionValues[i].setDisable(true);
             }
         }
-
+        inputenMixDelay.setText(settings.getEnMixDelay());
         inputVideoSource.setValue(settings.getVideoSource());
         inputVideoSourceBuffer.setValue(settings.getVideoBuffer());
         inputAudioSourceBuffer.setValue(settings.getAudioBuffer());
@@ -386,6 +409,10 @@ public class StreamingGUI extends Application {
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
             settings.getAudioSourcesChannel().put("audioChannel" + i, inputAudioSourcesChannel[i].getValue());
         }
+        for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
+            settings.getNoiseReductionLevel().put("noiseReductionLevel" + i, inputNoiseReductionValues[i].getValue());
+        }
+        settings.setEnMixDelay((inputenMixDelay.getText()));
         settings.setVideoSource(inputVideoSource.getValue());
         settings.setVideoBitrate(inputVideoBitrate.getValue());
         settings.setAudioBuffer(inputAudioSourceBuffer.getValue());
@@ -580,7 +607,7 @@ public class StreamingGUI extends Application {
         else currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM);
         stopButton.setDisable(true);
         blinkingTimeLine.stop();
-        nowPlayingBox.setStyle("");
+        nowPlayingBox.setStyle("-fx-background-color: -red-color;");
         startButton.setDisable(streamRecorder.isAliveProperty().getValue());
         if(isTheOutputAFile.get())
             primaryStage.getIcons().setAll(iconRecordingIdle);
@@ -628,47 +655,78 @@ public class StreamingGUI extends Application {
         inputGrid.add(videoInputLabelHBox, 0, row);
         inputGrid.add(inputVideoSource, 1, row);
         inputVideoSource.setPrefWidth(450);
-        //If it's empty, we select the first element
-        if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
-        Label videoPIDinfoLabel = new Label("?");
-        videoPIDinfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip2 = new Tooltip("Value between (32 and 240). Information needed on some streaming platform.\nThe PID (Packet Identifier) in a video stream is used in MPEG transport stream (TS) containers to identify packets within the stream.\n Each type of data (video, audio, subtitles, etc.) in the transport stream is assigned a unique PID, which allows demultiplexing devices to separate and correctly process different types of data.");
-        Tooltip.install(videoPIDinfoLabel, tooltip2);
+
+        Label audioChannelInfoLabel2 = new Label("?");
+        audioChannelInfoLabel2.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltip2 = new Tooltip("If the input device manage only this language, choose 'Join'. Otherwise, choose 'Left' for the first language manage by the device, and 'Right' for the second language.\nWARNING: make sure the audio input support stereo if you choose left or right");
+        Tooltip.install(audioChannelInfoLabel2, tooltip2);
         tooltip2.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
         tooltip2.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
         tooltip2.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
         tooltip2.getStyleClass().add("tooltip");
-        Label videoPIDLabel = new Label("PID:");
+        Label audioChannelLabel = new Label("Audio Channel:");
         // Create an HBox to hold both labels
-        HBox videoPIDLabelHBox = new HBox(1);  // 5 is the spacing between the labels
-        videoPIDLabelHBox.getChildren().addAll(videoPIDLabel, videoPIDinfoLabel);
-        inputGrid.add(videoPIDLabelHBox, 2, row);
-        inputGrid.add(inputVideoPid, 3, row);
-        row++;
+        HBox audioChannelLabelHBox = new HBox(1,audioChannelLabel,audioChannelInfoLabel2);  // 5 is the spacing between the labels
+        inputGrid.add(audioChannelLabelHBox, 2, row);
 
-        addLanguageRow(inputGrid, row, "English:", inputAudioSources[0], inputAudioSourcesChannel[0]);
         row++;
-        addLanguageRow(inputGrid, row, "Spanish:", inputAudioSources[1], inputAudioSourcesChannel[1]);
+        //If it's empty, we select the first element
+        if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
+        addLanguageRow(inputGrid, row, "Prayers (for mix):", inputAudioSources[0], inputAudioSourcesChannel[0],null);
+        Label EnMixDelayInfoLabel = new Label("?");
+        EnMixDelayInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip toolt = new Tooltip("The delay we put on the englih mix so it synchronise the english coming  the speakers throw the microphone to avoid echo");
+        Tooltip.install(EnMixDelayInfoLabel, toolt);
+        toolt.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        toolt.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        toolt.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        toolt.getStyleClass().add("tooltip");
+        Label EnMixDelayLabel = new Label("En MixDelay:");
+        // Create an HBox to hold both labels
+        HBox EnMixDelayLabelHBox = new HBox(1,EnMixDelayLabel,EnMixDelayInfoLabel);  // 5 is the spacing between the labels
+        inputGrid.add(EnMixDelayLabelHBox, 3, row);
         row++;
-        addLanguageRow(inputGrid, row, "French:", inputAudioSources[2], inputAudioSourcesChannel[2]);
+        addLanguageRow(inputGrid, row, "English (for mix):", inputAudioSources[1], inputAudioSourcesChannel[1],null);
+        inputGrid.add(inputenMixDelay, 3, row);
+
         row++;
-        addLanguageRow(inputGrid, row, "Portuguese:", inputAudioSources[3], inputAudioSourcesChannel[3]);
+        Separator separator = new Separator();
+        separator.setPrefWidth(WINDOW_WIDTH-50);
+        inputGrid.add(separator, 0, row);
+        GridPane.setColumnSpan(separator,2);
+        Label noiseReductionInfoLabel = new Label("?");
+        noiseReductionInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip toolti = new Tooltip("The number of iteration of the noise reduction filter. The noise reduction filter directory needs to be installed at the root of C:\n" +
+                "The model are C:\\rnmodel\\sh.rnnn etc., and the files are downloadable here https://github.com/GregorR/rnnoise-nu");
+        Tooltip.install(noiseReductionInfoLabel, toolti);
+        toolti.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        toolti.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        toolti.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        toolti.getStyleClass().add("tooltip");
+        Label noiseReductionLabel = new Label("Noise reduction:");
+        // Create an HBox to hold both labels
+        HBox noiseReductionLabelHBox = new HBox(1,noiseReductionLabel,noiseReductionInfoLabel);  // 5 is the spacing between the labels
+        inputGrid.add(noiseReductionLabelHBox, 3, row);
         row++;
-        addLanguageRow(inputGrid, row, "German:", inputAudioSources[4], inputAudioSourcesChannel[4]);
+        addLanguageRow(inputGrid, row, "English:", inputAudioSources[2], inputAudioSourcesChannel[2],inputNoiseReductionValues[2]);
         row++;
-        addLanguageRow(inputGrid, row, "Cantonese:", inputAudioSources[5], inputAudioSourcesChannel[5]);
+        addLanguageRow(inputGrid, row, "Spanish:", inputAudioSources[3], inputAudioSourcesChannel[3],inputNoiseReductionValues[3]);
         row++;
-        addLanguageRow(inputGrid, row, "Mandarin:", inputAudioSources[6], inputAudioSourcesChannel[6]);
+        addLanguageRow(inputGrid, row, "French:", inputAudioSources[4], inputAudioSourcesChannel[4],inputNoiseReductionValues[4]);
         row++;
-        addLanguageRow(inputGrid, row, "Vietnamese:", inputAudioSources[7], inputAudioSourcesChannel[7]);
+        addLanguageRow(inputGrid, row, "Portuguese:", inputAudioSources[5], inputAudioSourcesChannel[5],inputNoiseReductionValues[5]);
         row++;
-        addLanguageRow(inputGrid, row, "Italian:", inputAudioSources[8], inputAudioSourcesChannel[8]);
+        addLanguageRow(inputGrid, row, "German:", inputAudioSources[6], inputAudioSourcesChannel[6],inputNoiseReductionValues[6]);
         row++;
-        addLanguageRow(inputGrid, row, "Finnish:", inputAudioSources[9], inputAudioSourcesChannel[9]);
+        addLanguageRow(inputGrid, row, "Cantonese:", inputAudioSources[7], inputAudioSourcesChannel[7],inputNoiseReductionValues[7]);
         row++;
-        addLanguageRow(inputGrid, row, "Greek:", inputAudioSources[10], inputAudioSourcesChannel[10]);
+        addLanguageRow(inputGrid, row, "Mandarin:", inputAudioSources[8], inputAudioSourcesChannel[8],inputNoiseReductionValues[8]);
         row++;
-        addLanguageRow(inputGrid, row, "Extra Language 1:", inputAudioSources[11], inputAudioSourcesChannel[11]);
+        addLanguageRow(inputGrid, row, "Vietnamese:", inputAudioSources[9], inputAudioSourcesChannel[9],inputNoiseReductionValues[9]);
+        row++;
+        addLanguageRow(inputGrid, row, "Italian:", inputAudioSources[10], inputAudioSourcesChannel[10],inputNoiseReductionValues[10]);
+        row++;
+        addLanguageRow(inputGrid, row, "Finnish:", inputAudioSources[11], inputAudioSourcesChannel[11],inputNoiseReductionValues[11]);
 
         int comboWith = 100;
         ColumnConstraints col1 = new ColumnConstraints();
@@ -687,7 +745,6 @@ public class StreamingGUI extends Application {
 
         row = 0;
         Label chooseOutputTypeLabelInfo = new Label("?");
-        videoPIDinfoLabel.getStyleClass().add("info-for-tooltip");
         Tooltip tooltipA = new Tooltip("Choose if you want to livestream or either record in a file on the computer.");
         Tooltip.install(chooseOutputTypeLabelInfo, tooltipA);
         tooltipA.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
@@ -702,7 +759,7 @@ public class StreamingGUI extends Application {
         spac.setMaxWidth(54);
         outPutTypeLabelHBox.getChildren().addAll(chooseOutputTypeLabel,chooseOutputTypeLabelInfo,spac, inputChooseBetweenUrlOrFile);
         inputGrid2.add(outPutTypeLabelHBox, 0, row);
-        GridPane.setColumnSpan(outPutTypeLabelHBox, 3);
+        GridPane.setColumnSpan(outPutTypeLabelHBox, 2);
 
         Label timeNeededinfoLabel = new Label("?");
         timeNeededinfoLabel.getStyleClass().add("info-for-tooltip");
@@ -720,8 +777,22 @@ public class StreamingGUI extends Application {
         spac.setMaxWidth(54);
         inputTimeNeededToOpenADevice.setMaxWidth(50);
         outputTimeNeededLabelHBox.getChildren().addAll(timeNeededLabel,timeNeededinfoLabel,spac2, inputTimeNeededToOpenADevice);
-        inputGrid2.add(outputTimeNeededLabelHBox, 3, row);
-        GridPane.setColumnSpan(outputTimeNeededLabelHBox, 3);
+        inputGrid2.add(outputTimeNeededLabelHBox, 2, row);
+        GridPane.setColumnSpan(outputTimeNeededLabelHBox, 2);
+
+        Label videoPIDinfoLabel = new Label("?");
+        videoPIDinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltip3 = new Tooltip("Value between (32 and 240). Information needed on some streaming platform.\nThe PID (Packet Identifier) in a video stream is used in MPEG transport stream (TS) containers to identify packets within the stream.\n Each type of data (video, audio, subtitles, etc.) in the transport stream is assigned a unique PID, which allows demultiplexing devices to separate and correctly process different types of data.");
+        Tooltip.install(videoPIDinfoLabel, tooltip3);
+        tooltip3.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltip3.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltip3.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip3.getStyleClass().add("tooltip");
+        Label videoPIDLabel = new Label("PID:");
+        // Create an HBox to hold both labels
+        HBox videoPIDLabelHBox = new HBox(1);  // 5 is the spacing between the labels
+        videoPIDLabelHBox.getChildren().addAll(videoPIDLabel, videoPIDinfoLabel, inputVideoPid);
+        inputGrid2.add(videoPIDLabelHBox, 4, row);
         row++;
 
         Label outputUrlinfoLabel = new Label("?");
@@ -814,16 +885,16 @@ public class StreamingGUI extends Application {
 
         Label pixelFormatInfoLabel = new Label("?");
         pixelFormatInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip3 = new Tooltip("While encoding a video, selecting the correct pixel format is essential when streaming to a platform because it impacts the video stream's compatibility, quality, and performance.\n The widely supported format is yuv420p. Using an incorrect pixel format can prevent the streaming platform from playing the video properly.");
-        Tooltip.install(pixelFormatInfoLabel, tooltip3);
-        tooltip3.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip3.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip3.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip3.getStyleClass().add("tooltip");
+        Tooltip tooltip4 = new Tooltip("While encoding a video, selecting the correct pixel format is essential when streaming to a platform because it impacts the video stream's compatibility, quality, and performance.\n The widely supported format is yuv420p. Using an incorrect pixel format can prevent the streaming platform from playing the video properly.");
+        Tooltip.install(pixelFormatInfoLabel, tooltip4);
+        tooltip4.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltip4.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltip4.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip4.getStyleClass().add("tooltip");
         Label pixelFormatlLabel = new Label("Pixel format:");
         // Create an HBox to hold both labels
-        HBox audioChannelLabelHBox = new HBox(1,pixelFormatlLabel,pixelFormatInfoLabel);
-        inputGrid2.add(audioChannelLabelHBox, 2, row);
+        HBox audioChannelLabelHBox2 = new HBox(1,pixelFormatlLabel,pixelFormatInfoLabel);
+        inputGrid2.add(audioChannelLabelHBox2, 2, row);
 
         //If it's empty, we select the first element
         if(inputPixelFormat.getValue()==null || inputPixelFormat.getValue().isEmpty()) inputPixelFormat.setValue(inputPixelFormat.getItems().get(0));
@@ -832,7 +903,7 @@ public class StreamingGUI extends Application {
 
         Label outputResInfoLabel = new Label("?");
         outputResInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip4= new Tooltip("""
+        Tooltip tooltip5= new Tooltip("""
                 The parameters hd480, hd720, and hd1080 are shorthand for setting standard high-definition (HD) resolutions during video encoding:
 
                 hd480: Configures the video to 852x480 pixels, offering a resolution that is higher than standard definition but lower than HD, suitable for lower bandwidth or smaller screens.
@@ -843,11 +914,11 @@ public class StreamingGUI extends Application {
 
                 IMPORTANT: Streaming in hd1080 uses twice the data compared to hd720. The cost of the streaming platform is directly related to the total bandwidth consumed by viewers.
                 If you plan to stream in hd1080, please confirm with the treasurer to ensure it fits within the budget.""");
-        Tooltip.install(outputResInfoLabel, tooltip4);
-        tooltip4.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip4.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip4.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip4.getStyleClass().add("tooltip");
+        Tooltip.install(outputResInfoLabel, tooltip5);
+        tooltip5.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltip5.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltip5.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip5.getStyleClass().add("tooltip");
         Label outputReslLabel = new Label("Output resolution:");
         // Create an HBox to hold both labels
         HBox outputResLabelHBox = new HBox(1,outputReslLabel,outputResInfoLabel);
@@ -859,7 +930,7 @@ public class StreamingGUI extends Application {
 
         Label audioBitrateInfoLabel = new Label("?");
         audioBitrateInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip5= new Tooltip("""
+        Tooltip tooltip7= new Tooltip("""
                 128k Audio Bitrate: This setting configures the audio bitrate to 128 kilobits per second (kbps) during encoding.\s
                 It offers a reasonable balance between audio quality and file size, suitable for most standard audio playback scenarios, such as online streaming or casual listening.
 
@@ -867,11 +938,11 @@ public class StreamingGUI extends Application {
                  It's ideal for scenarios where audio fidelity is crucial, such as professional music streaming, podcasts, or audio recordings, but it results in larger file sizes compared to lower bitrate options.
 
                 These settings will apply to all audio tracks. If there are multiple tracks, it will significantly increase the data usage and bandwidth consumed by viewers on the streaming platform, which forms the basis for invoicing""");
-        Tooltip.install(audioBitrateInfoLabel, tooltip5);
-        tooltip5.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip5.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip5.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip5.getStyleClass().add("tooltip");
+        Tooltip.install(audioBitrateInfoLabel, tooltip7);
+        tooltip7.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltip7.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltip7.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip7.getStyleClass().add("tooltip");
         Label audioBitrateLabel = new Label("Audio bitrate:");
         // Create an HBox to hold both labels
         HBox audioBitrateLabelHBox = new HBox(1,audioBitrateLabel,audioBitrateInfoLabel);
@@ -903,12 +974,12 @@ public class StreamingGUI extends Application {
 
         Label fpsInfoLabel = new Label("?");
         fpsInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip7= new Tooltip("The \"frames per second\" (fps) parameter in FFmpeg specifies the number of individual frames displayed or processed per second in a video.\nIt determines the smoothness and speed of motion in the video. A higher fps value results in smoother motion but may require more processing power and bandwidth, \npotentially impacting streaming performance by increasing the computational load and data transmission requirements.\nTherefore, while higher fps can enhance visual quality, it may also necessitate more robust hardware and network resources to maintain smooth streaming.");
-        Tooltip.install(fpsInfoLabel, tooltip7);
-        tooltip7.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip7.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip7.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip7.getStyleClass().add("tooltip");
+        Tooltip tooltip8= new Tooltip("The \"frames per second\" (fps) parameter in FFmpeg specifies the number of individual frames displayed or processed per second in a video.\nIt determines the smoothness and speed of motion in the video. A higher fps value results in smoother motion but may require more processing power and bandwidth, \npotentially impacting streaming performance by increasing the computational load and data transmission requirements.\nTherefore, while higher fps can enhance visual quality, it may also necessitate more robust hardware and network resources to maintain smooth streaming.");
+        Tooltip.install(fpsInfoLabel, tooltip8);
+        tooltip8.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltip8.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltip8.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip8.getStyleClass().add("tooltip");
         Label fpsLabel = new Label("Frame per second:");
         // Create an HBox to hold both labels
         HBox fpsLabelHBox = new HBox(1,fpsLabel,fpsInfoLabel);
@@ -921,7 +992,7 @@ public class StreamingGUI extends Application {
 
         Label videoBitrateInfoLabel = new Label("?");
         videoBitrateInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip8= new Tooltip("""
+        Tooltip toolti8= new Tooltip("""
                 The video bitrate parameter determines the amount of data allocated to encode each second of video footage. It directly affects the quality and file size of the resulting video file.
                  Higher bitrate values generally result in better visual quality but also produce larger file sizes.
 
@@ -934,11 +1005,11 @@ public class StreamingGUI extends Application {
 
                 3/ hd1080p (1920x1080 pixels): Recommended Bitrate: 5000-8000 kbps
                 Full HD resolution demands a higher bitrate for optimal quality. This range is suitable for high-quality streaming and playback on larger screens.""");
-        Tooltip.install(videoBitrateInfoLabel, tooltip8);
-        tooltip8.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip8.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip8.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip8.getStyleClass().add("tooltip");
+        Tooltip.install(videoBitrateInfoLabel, toolti8);
+        toolti8.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        toolti8.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        toolti8.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        toolti8.getStyleClass().add("tooltip");
         Label videoBitrateLabel = new Label("Video bitrate:");
         // Create an HBox to hold both labels
         HBox videoBitrateLabelHBox = new HBox(1,videoBitrateLabel,videoBitrateInfoLabel);
@@ -1008,7 +1079,7 @@ public class StreamingGUI extends Application {
         return new VBox(inputGrid,inputGrid2,saveHBox);
     }
 
-    private void addLanguageRow(GridPane gridPane, int rowIndex, String labelText, ComboBox<String> audioInput, ComboBox<String> audioInputChannel) {
+    private void addLanguageRow(GridPane gridPane, int rowIndex, String labelText, ComboBox<String> audioInput, ComboBox<String> audioInputChannel,ComboBox<String> noiseReductionValue) {
         Label audioInputinfoLabel = new Label("?");
         audioInputinfoLabel.getStyleClass().add("info-for-tooltip");
         Tooltip tooltip = new Tooltip("Choose the input device for this language.It can happen you need to choose a device that manage two language, depending of the audio driver offers mono or only stereos.\n If you have to share an input device between languages, you'll have to use the Channel audio parameter which will allow to divide the stereo if needed");
@@ -1023,26 +1094,23 @@ public class StreamingGUI extends Application {
         gridPane.add(audioInputLabelHBox, 0, rowIndex);
         gridPane.add(audioInput, 1, rowIndex);
 
-        Label audioChannelInfoLabel2 = new Label("?");
-        audioChannelInfoLabel2.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip2 = new Tooltip("If the input device manage only this language, choose 'Join'. Otherwise, choose 'Left' for the first language manage by the device, and 'Right' for the second language.\nWARNING: make sure the audio input support stereo if you choose left or right");
-        Tooltip.install(audioChannelInfoLabel2, tooltip2);
-        tooltip2.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip2.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip2.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip2.getStyleClass().add("tooltip");
-        Label audioChannelLabel = new Label("Audio Channel:");
-        // Create an HBox to hold both labels
-        HBox audioChannelLabelHBox = new HBox(1,audioChannelLabel,audioChannelInfoLabel2);  // 5 is the spacing between the labels
-        gridPane.add(audioChannelLabelHBox, 2, rowIndex);
-        gridPane.add(audioInputChannel, 3, rowIndex);
+        gridPane.add(audioInputChannel, 2, rowIndex);
+        if(noiseReductionValue!=null) {
+            gridPane.add(noiseReductionValue, 3, rowIndex);
+        }
 
         audioInput.valueProperty().addListener((observable, oldValue, newValue) -> {
             if (!newValue.equals("Not Used") && !newValue.isEmpty()) {
                 audioInputChannel.setDisable(false);
                 audioInputChannel.setValue("Join");
+                if(noiseReductionValue!=null) {
+                    noiseReductionValue.setDisable(false);
+                }
             } else {
                 audioInputChannel.setDisable(true);
+                if(noiseReductionValue!=null) {
+                    noiseReductionValue.setDisable(true);
+                }
             }
         });
     }
@@ -1073,11 +1141,14 @@ public class StreamingGUI extends Application {
             return;
         }
         displayPIDInfo();
+        bgColor = "-green-color";
+        playingError = false;
         doWeAutomaticallyScrollAtBottom = true;
         streamRecorder.setSrtUrl(inputSrtURL.getText());
+        streamRecorder.setEnMixDelay(Integer.parseInt(inputenMixDelay.getText()));
         streamRecorder.setOutputDirectory(inputOutputDirectory.getText());
         streamRecorder.initialiseVideoDevice(inputVideoSource.getValue());
-        streamRecorder.initialiseAudioDevices(Arrays.stream(inputAudioSources).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputAudioSourcesChannel).map(ComboBox::getValue).toArray(String[]::new));
+        streamRecorder.initialiseAudioDevices(Arrays.stream(inputAudioSources).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputAudioSourcesChannel).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputNoiseReductionValues).map(ComboBox::getValue).toArray(String[]::new));
         streamRecorder.setPixelFormat(inputPixelFormat.getValue());
         streamRecorder.setOutputResolution(inputSrtResolution.getValue());
         streamRecorder.setDelay(Integer.parseInt(inputSoundDelay.getText()));
@@ -1098,7 +1169,7 @@ public class StreamingGUI extends Application {
             // Your existing code for streamRecorder.run() goes here
             streamRecorder.setSrtUrl(inputSrtURL.getText());
             streamRecorder.initialiseVideoDevice(inputVideoSource.getValue());
-            streamRecorder.initialiseAudioDevices(Arrays.stream(inputAudioSources).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputAudioSourcesChannel).map(ComboBox::getValue).toArray(String[]::new));
+            streamRecorder.initialiseAudioDevices(Arrays.stream(inputAudioSources).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputAudioSourcesChannel).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputNoiseReductionValues).map(ComboBox::getValue).toArray(String[]::new));
             try {
                 streamRecorder.run();
             } catch (Exception e) {
@@ -1119,64 +1190,80 @@ public class StreamingGUI extends Application {
         String baseURL = "https://player.castr.com/"+rValue;
         String parameters = "?tracks=";
         boolean firstParameter = true;
-        if(!inputAudioSources[0].getValue().equals("Not Used")) {
-            parameters +="English";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[1].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Español";
-            firstParameter = false;
-        }
         if(!inputAudioSources[2].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Français";
+            parameters +="English";
             firstParameter = false;
         }
         if(!inputAudioSources[3].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="Português";
+            parameters +="Español";
             firstParameter = false;
         }
         if(!inputAudioSources[4].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="Deutsch";
+            parameters +="Français";
             firstParameter = false;
         }
         if(!inputAudioSources[5].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="廣東話";
+            parameters +="Português";
             firstParameter = false;
         }
         if(!inputAudioSources[6].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="普通话";
+            parameters +="Deutsch";
             firstParameter = false;
         }
         if(!inputAudioSources[7].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="Tiếng%20Việt";
+            parameters +="廣東話";
             firstParameter = false;
         }
         if(!inputAudioSources[8].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="Italiano";
+            parameters +="普通话";
             firstParameter = false;
         }
         if(!inputAudioSources[9].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="Suomi";
+            parameters +="Tiếng%20Việt";
             firstParameter = false;
         }
         if(!inputAudioSources[10].getValue().equals("Not Used")) {
             if(!firstParameter)  parameters +=",";
-            parameters +="Ελληνικά";
+            parameters +="Italiano";
+            firstParameter = false;
+        }
+        if(!inputAudioSources[11].getValue().equals("Not Used")) {
+            if(!firstParameter)  parameters +=",";
+            parameters +="Suomi";
+            firstParameter = false;
         }
         return baseURL+parameters;
     }
 
     private boolean checkParameters() {
         boolean result = true;
+        if(inputAudioSources[0].getValue().equals("Not Used")) {
+            appendToConsole("Please select an audio source for the prayers","",Color.RED);
+            result = false;
+        }
+        if(inputAudioSources[1].getValue().equals("Not Used")) {
+            appendToConsole("Please select an audio source for the english to be mixed with the translation","",Color.RED);
+            result = false;
+        }
+        File firstRnnnFile = new File("C:/rnmodel/sh.rnnn");
+        if(!firstRnnnFile.exists()) {
+            appendToConsole("The model file for the noise reduction filter is not found. It should be at " +  firstRnnnFile.getPath() +
+                    ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models","",Color.RED);
+            result = false;
+        }
+        File secondRnnfile = new File("C:/rnmodel/bd.rnnn");
+        if(!secondRnnfile.exists()) {
+            appendToConsole("The model file for the noise reduction filter is not found. It should be at " + secondRnnfile.getPath() +
+                    ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models","",Color.RED);
+            result = false;
+        }
         if(inputVideoPid.getText().isEmpty()) {
             appendToConsole("Please Fill the Video PID Field (see Tooltip for help)","",Color.RED);
             result = false;
@@ -1306,8 +1393,41 @@ public class StreamingGUI extends Application {
             }
         }
         if (warningMatcher.find()) text.setFill(Color.ORANGE);
-        if (errorMatcher.find()) text.setFill(Color.RED);
+        if (errorMatcher.find()) {
+            text.setFill(Color.RED);
+            bgColor = "-orange-color";
+            Task<Void> task = new Task<Void>() {
+                @Override
+                protected Void call() {
+                    if (!playingError) {
+                        playingError = true;
+                        String beepSound = getClass().getResource("/error.wav").toString();
+                        Media media = new Media(beepSound);
+                        MediaPlayer mediaPlayer = new MediaPlayer(media);
+                        CountDownLatch latch = new CountDownLatch(1);
 
+                        mediaPlayer.play();
+                        mediaPlayer.setOnEndOfMedia(() -> {
+                            Platform.runLater(() -> {
+                                playingError = false;
+                                latch.countDown();
+                            });
+                        });
+
+                        try {
+                            latch.await();  // Wait for the media to finish
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    return null;
+                }
+            };
+
+            Thread thread = new Thread(task);
+            thread.setDaemon(false); // Ensure the thread does not stop when the application exits
+            thread.start();
+        }
         if(oldLine!=null && oldLine.startsWith("frame=") && newLine.startsWith("frame="))
         {
             int lastIndex = consoleOutputTextFlow.getChildren().size() - 1;

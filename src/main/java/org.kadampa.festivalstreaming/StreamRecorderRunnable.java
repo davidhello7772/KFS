@@ -1,9 +1,13 @@
 package org.kadampa.festivalstreaming;
 
+import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import javafx.concurrent.Task;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
 
 import java.io.File;
 import java.io.IOException;
@@ -20,7 +24,7 @@ public class StreamRecorderRunnable implements Runnable {
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();
     private final List<String> audioInputsChannel = new ArrayList<>();
-
+    private final List<Integer> noiseReductionValues = new ArrayList<>();
     private String outputResolution;
     private String pixelFormat;
     private String encoder;
@@ -29,7 +33,7 @@ public class StreamRecorderRunnable implements Runnable {
     private String videoBufferSize;
     private String audioBufferSize;
     private boolean isTheOutputAFile;
-
+    private int enMixDelay;
     private int fps;
     private int delay;
     private int timeNeededToOpenADevice;
@@ -94,6 +98,7 @@ public class StreamRecorderRunnable implements Runnable {
 
         //The audio devices
         Map<String,Integer> alreadyOpenedAudioDevices = new LinkedHashMap<>();
+        int numberOfChannel= audioInputsChannel.size();
         for(String audioDevice:audioDevicesList) {
             i++;
             //Here we open the devices just one time for each device
@@ -115,26 +120,100 @@ public class StreamRecorderRunnable implements Runnable {
 
             int deviceNumber = alreadyOpenedAudioDevices.get(audioDevice);
 
-            if(audioInputsChannel.get(i-1).equals("Join")) {
-                //command to sync all the audio output
-                filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[out").append(i).append("];");
-
-                mapCommand.add("-map");
-                mapCommand.add("\"[out"+i+"]\"");
-            }
-            else {
-                filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
-                if(audioInputsChannel.get(i-1).equals("Left")) {
-                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[outleft").append(i).append("];");
-
-                    mapCommand.add("-map");
-                    mapCommand.add("\"[outleft"+i+"]\"");
+            //input 0 is Prayer to be mixed with other languages (english included)
+            //input 1 is English voices to be mixed with other languages except english (at low level)
+            //input 2 is English (not to be mixed with other language, but need the  prayer to be added)
+            if(i==1) {
+                //Here it's the prayer
+                if(audioInputsChannel.get(i-1).equals("Join"))
+                    filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
+                else
+                    filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
+                if(audioInputsChannel.get(i-1).equals("Left"))
+                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
+                if(audioInputsChannel.get(i-1).equals("Right"))
+                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
+                //We new duplicate prayers to use it in the different mixes
+                //The first 2 channel don't have the mix, because they are the prayers itself and the english to be mixed with the translation
+                filterCommand.append("[prayers]asplit=").append(numberOfChannel-2);
+                for (int  k=0;k<numberOfChannel-2;k++) {
+                    //We start at 3 because the first need for the miw in english which is at index 3
+                    filterCommand.append("[prayers").append(k+3).append("]");
                 }
+                filterCommand.append(";");
+            } else if(i==2) {
+                //TODO: we add a delay to remove the echo
+
+                int audioDelayToRemoveEcho = audioDelay + enMixDelay;
+                //Here it's the english low level to mix with other languages than english
+                if(audioInputsChannel.get(i-1).equals("Join"))
+                    filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelayToRemoveEcho).append("|").append(audioDelayToRemoveEcho).append(",pan=mono|c0=c0[englishToBeMixed];");
+                else
+                    filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
+                if(audioInputsChannel.get(i-1).equals("Left"))
+                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelayToRemoveEcho).append("|").append(audioDelayToRemoveEcho).append(",pan=mono|c0=c0[englishToBeMixed];");
+                if(audioInputsChannel.get(i-1).equals("Right"))
+                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelayToRemoveEcho).append("|").append(audioDelayToRemoveEcho).append(",pan=mono|c0=c0[englishToBeMixed];");
+                //We new duplicate to use it in the different mixes
+                //The first 3 channel don't have the mix, because they are the prayers, the english to be mixed with the translation itself and the english
+                filterCommand.append("[englishToBeMixed]asplit=").append(numberOfChannel-3);
+                for (int  k=0;k<numberOfChannel-3;k++) {
+                    //We start at 4 because the first need for the miw in the language after english which is at index 4
+                    filterCommand.append("[englishToBeMixed").append(k+4).append("]");
+                }
+                filterCommand.append(";");
+
+            } else if(i==3) {
+                //Here it's the english that need the mix of the prayer but not the english low level
+                if(audioInputsChannel.get(i-1).equals("Join"))
+                    filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
+                else
+                    filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
                 if(audioInputsChannel.get(i-1).equals("Right")) {
-                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[outright").append(i).append("];");
-                    mapCommand.add("-map");
-                    mapCommand.add("\"[outright"+i+"]\"");
+                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 }
+                if(audioInputsChannel.get(i-1).equals("Left")) {
+                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
+                }
+                //For the english language, the noiseReduction value has a different meaning that the other languages
+                //Here, 3 means we use 100% of the filter, 2 means 75% and 1 means 50%
+                //We also use the bd model that is trained to remove general noise but not human noises
+                //We had 8dB because thefilter decrease the sound
+                if(noiseReductionValues.get(i - 1)==1) {
+                    filterCommand.append(",arnndn=model='/rnmodel/bd.rnnn:mix=0.3'");
+                }
+                if(noiseReductionValues.get(i - 1)==2) {
+                    filterCommand.append(",arnndn=model='/rnmodel/bd.rnnn:mix=0.6'");
+                }
+                if(noiseReductionValues.get(i - 1)==3) {
+                    filterCommand.append(",arnndn=model='/rnmodel/bd.rnnn'");
+                }
+
+
+                filterCommand.append("[englishfiltered").append(i).append("];");
+                filterCommand.append("[prayers").append(i).append("][englishfiltered").append(i).append("]amix=inputs=2,volume=6dB").append("[outmixed").append(i).append("];");
+                mapCommand.add("-map");
+                mapCommand.add("\"[outmixed" + i + "]\";");
+            } else {
+                if(audioInputsChannel.get(i-1).equals("Join"))
+                    filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
+                else
+                    filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
+                if(audioInputsChannel.get(i-1).equals("Right")) {
+                    filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
+                }
+                if(audioInputsChannel.get(i-1).equals("Left")) {
+                    filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
+                }
+                //For the other language, the noiseReduction value is the number of time we apply the filter
+                //We use the sh model that is quite a strong filter
+                for(int l=0;l<noiseReductionValues.get(i - 1);l++) {
+                    filterCommand.append(",arnndn=model='/rnmodel/sh.rnnn'");
+                }
+                filterCommand.append("[outfiltered").append(i).append("];");
+                filterCommand.append("[prayers").append(i).append("][englishToBeMixed").append(i).append("][outfiltered").append(i).append("]amix=inputs=3,volume=8dB").append("[outmixed").append(i).append("];");
+                mapCommand.add("-map");
+                mapCommand.add("\"[outmixed" + i + "]\";");
             }
         }
 
@@ -208,15 +287,18 @@ public class StreamRecorderRunnable implements Runnable {
         }
     }
 
-    public void initialiseAudioDevices(String[] deviceNames,String[] channelInfos) {
+    public void initialiseAudioDevices(String[] deviceNames,String[] channelInfos,String[] noiseReductionVals) {
         audioDevicesList.clear();
         audioInputsChannel.clear();
+        noiseReductionValues.clear();
         for (int i = 0; i< deviceNames.length; i++) {
             String deviceName = deviceNames[i];
             String deviceInputChannel = channelInfos[i];
+            int noiseReductionIteration = Integer.parseInt(noiseReductionVals[i]);
             if (!Objects.equals(deviceName, "Not Used")) {
                 audioDevicesList.add(deviceName);
                 audioInputsChannel.add(deviceInputChannel);
+                noiseReductionValues.add(noiseReductionIteration);
             }
         }
     }
@@ -298,6 +380,9 @@ public class StreamRecorderRunnable implements Runnable {
         this.audioBufferSize = audioBufferSize;
     }
 
+    public void setEnMixDelay(int delay) {
+        enMixDelay = delay;
+    }
     public void setIsTheOutputAFile(boolean theOutputAFile) {
         isTheOutputAFile = theOutputAFile;
     }
