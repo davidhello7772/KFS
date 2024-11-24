@@ -5,10 +5,6 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
-import javafx.concurrent.Task;
-import javafx.scene.media.Media;
-import javafx.scene.media.MediaPlayer;
-
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -60,6 +56,7 @@ public class StreamRecorderRunnable implements Runnable {
             Executors.newSingleThreadExecutor().submit(errorStreamGobbler);
             process.waitFor();
         } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
             if(monitor!=null) monitor.stopMonitoring();
             stop();
         }
@@ -255,8 +252,21 @@ public class StreamRecorderRunnable implements Runnable {
         parameterCommand.add("-mpegts_start_pid");
         parameterCommand.add(String.valueOf(videoPid));
 
+        // to avoid DTS drift that show mainly on Safari
+        parameterCommand.add("-fflags");
+        parameterCommand.add("+genpts");
+        parameterCommand.add("-async");
+        parameterCommand.add("1");
+        parameterCommand.add("-use_wallclock_as_timestamps");
+        parameterCommand.add("1");
+        parameterCommand.add("-max_interleave_delta");
+        parameterCommand.add("0");
+        // End DTS Drift
+
         outputCommand.add("-r");
         outputCommand.add(String.valueOf(fps));
+
+
 
         if(isTheOutputAFile) {
             LocalDateTime now = LocalDateTime.now();
