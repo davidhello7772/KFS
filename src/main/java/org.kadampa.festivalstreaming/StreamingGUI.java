@@ -34,7 +34,9 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 
 import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Line;
 import javax.sound.sampled.Mixer;
+import javax.sound.sampled.TargetDataLine;
 import java.io.File;
 import java.util.Arrays;
 import java.util.List;
@@ -307,9 +309,18 @@ public class StreamingGUI extends Application {
         for (ComboBox<String> audioInput : inputAudioSources) {
             audioInput.getItems().add("Not Used");
             for (Mixer.Info mixerInfo : mixerInfos) {
-                if (!mixerInfo.getDescription().equals("Port Mixer")) {
-                    if (!mixerInfo.getName().contains("OUT"))
-                        audioInput.getItems().add(mixerInfo.getName());
+                Mixer mixer = AudioSystem.getMixer(mixerInfo);
+                // Check if this mixer supports any TargetDataLine (input line)
+                Line.Info[] targetLineInfos = mixer.getTargetLineInfo();
+                boolean hasInput = false;
+                for (Line.Info lineInfo : targetLineInfos) {
+                    if (TargetDataLine.class.isAssignableFrom(lineInfo.getLineClass())) {
+                        hasInput = true;
+                        break;
+                    }
+                }
+                if (hasInput) {
+                    audioInput.getItems().add(mixerInfo.getName());
                 }
             }
         }
@@ -1102,7 +1113,7 @@ public class StreamingGUI extends Application {
         audioInput.valueProperty().addListener((observable, oldValue, newValue) -> {
             if (!newValue.equals("Not Used") && !newValue.isEmpty()) {
                 audioInputChannel.setDisable(false);
-                audioInputChannel.setValue("Join");
+               // audioInputChannel.setValue("Join");
                 if(noiseReductionValue!=null) {
                     noiseReductionValue.setDisable(false);
                 }
