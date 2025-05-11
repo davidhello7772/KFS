@@ -252,21 +252,8 @@ public class StreamRecorderRunnable implements Runnable {
         parameterCommand.add("-mpegts_start_pid");
         parameterCommand.add(String.valueOf(videoPid));
 
-        // to avoid DTS drift that show mainly on Safari
-        parameterCommand.add("-fflags");
-        parameterCommand.add("+genpts");
-        parameterCommand.add("-async");
-        parameterCommand.add("1");
-        parameterCommand.add("-use_wallclock_as_timestamps");
-        parameterCommand.add("1");
-        parameterCommand.add("-max_interleave_delta");
-        parameterCommand.add("0");
-        // End DTS Drift
-
         outputCommand.add("-r");
         outputCommand.add(String.valueOf(fps));
-
-
 
         if(isTheOutputAFile) {
             LocalDateTime now = LocalDateTime.now();
