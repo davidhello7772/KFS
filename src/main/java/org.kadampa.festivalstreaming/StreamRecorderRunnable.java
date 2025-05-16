@@ -1,6 +1,5 @@
 package org.kadampa.festivalstreaming;
 
-import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
@@ -14,9 +13,13 @@ import java.util.concurrent.Executors;
 
 public class StreamRecorderRunnable implements Runnable {
 
+    public final static int URL=1;
+    public final static int FILE=2;
+    public final static int FILE_AND_URL=3;
+
     private String srtUrl;
     private String outputDirectory;
-
+    private StreamingGUI appContext;
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();
     private final List<String> audioInputsChannel = new ArrayList<>();
@@ -28,7 +31,7 @@ public class StreamRecorderRunnable implements Runnable {
     private String videoBitrate;
     private String videoBufferSize;
     private String audioBufferSize;
-    private boolean isTheOutputAFile;
+    private int outputType;
     private int enMixDelay;
     private int fps;
     private int delay;
@@ -39,8 +42,8 @@ public class StreamRecorderRunnable implements Runnable {
     private final BooleanProperty isAliveProperty = new SimpleBooleanProperty(); // Create the property
     private int videoPid;
 
-    public StreamRecorderRunnable() {
-
+    public StreamRecorderRunnable(StreamingGUI streamingGUI) {
+        appContext = streamingGUI;
     }
 
     @Override
@@ -92,6 +95,7 @@ public class StreamRecorderRunnable implements Runnable {
         int j = 0;
         int videoDelay=0;
         int audioDelay = delay;
+        int languageCount = 0;
 
         //The audio devices
         Map<String,Integer> alreadyOpenedAudioDevices = new LinkedHashMap<>();
@@ -191,6 +195,7 @@ public class StreamRecorderRunnable implements Runnable {
                 filterCommand.append("[prayers").append(i).append("][englishfiltered").append(i).append("]amix=inputs=2,volume=6dB").append("[outmixed").append(i).append("];");
                 mapCommand.add("-map");
                 mapCommand.add("\"[outmixed" + i + "]\";");
+
             } else {
                 if(audioInputsChannel.get(i-1).equals("Join"))
                     filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
@@ -213,6 +218,78 @@ public class StreamRecorderRunnable implements Runnable {
                 mapCommand.add("\"[outmixed" + i + "]\";");
             }
         }
+
+        if(!appContext.getInputAudioSources()[2].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"English\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=eng");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[2].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Español\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=spa");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[4].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Français\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=fra");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[5].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Português\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=por");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[6].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Deutsch\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=deu");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[7].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"廣東話\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=chi");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[8].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"普通话\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=chi");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[9].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Tiếng%20Việt\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=vie");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[10].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Italiano\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=ita");
+            languageCount++;
+        }
+        if(!appContext.getInputAudioSources()[11].getValue().equals("Not Used")) {
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("title=\"Suomi\"");
+            parameterCommand.add("-metadata:s:a:" + languageCount);
+            parameterCommand.add("language=fin");
+            languageCount++;
+        }
+
 
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add("\""+ filterCommand +"\"");
@@ -255,17 +332,24 @@ public class StreamRecorderRunnable implements Runnable {
         outputCommand.add("-r");
         outputCommand.add(String.valueOf(fps));
 
-        if(isTheOutputAFile) {
-            LocalDateTime now = LocalDateTime.now();
-            // Create a formatter to define the output format
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd ¦ HH mm-ss");
-            String formattedDateTime = now.format(formatter);
-            String fileName = "recorded-video-"+formattedDateTime+".mp4";
-            outputCommand.add("\"" + outputDirectory + File.separatorChar + fileName + "\"");
-        }
-        else {
-            outputCommand.add("\"" + srtUrl + "\"");
-        }
+
+        LocalDateTime now = LocalDateTime.now();
+        // Create a formatter to define the output format
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
+        String formattedDateTime = now.format(formatter);
+        String fileName = "recorded-video-"+formattedDateTime+"-"+outputResolution+".mp4";
+        if(outputType==FILE_AND_URL) {
+            outputCommand.add("-f");
+            outputCommand.add("tee");
+            outputCommand.add("\"[f=mpegts:onfail=ignore]" + formatForFFmpegTee(outputDirectory + File.separatorChar + fileName) + " | [f=mpegts]"+ srtUrl +"\"");
+
+            int k =0;
+        } else if(outputType==FILE) {
+                outputCommand.add("\"" + outputDirectory + File.separatorChar + fileName + "\"");
+            }
+            else {
+                outputCommand.add("\"" + srtUrl + "\"");
+            }
         List<String> finalCommand = new ArrayList<>();
         finalCommand.add("ffmpeg");
         finalCommand.addAll(devicesListCommand);
@@ -380,8 +464,8 @@ public class StreamRecorderRunnable implements Runnable {
     public void setEnMixDelay(int delay) {
         enMixDelay = delay;
     }
-    public void setIsTheOutputAFile(boolean theOutputAFile) {
-        isTheOutputAFile = theOutputAFile;
+    public void setOutputType(int theOutputAFile) {
+        outputType = theOutputAFile;
     }
 
     public void setOutputDirectory(String outputDirectory) {
@@ -394,5 +478,23 @@ public class StreamRecorderRunnable implements Runnable {
 
     public void setTimeNeededToOpenADevice(int timeNeededToOpenADevice) {
         this.timeNeededToOpenADevice = timeNeededToOpenADevice;
+    }
+
+    /**
+     * Formats a Windows file path to a tee-compatible FFmpeg output path.
+     */
+    public static String formatForFFmpegTee(String windowsPath) {
+        if (windowsPath == null || windowsPath.isEmpty()) {
+            throw new IllegalArgumentException("Path cannot be null or empty.");
+        }
+
+        // Convert to forward slashes
+        String unixStylePath = windowsPath.replace("\\", "/");
+
+        // Escape percent signs for tee muxer
+        String escapedPath = unixStylePath.replace("%", "\\%");
+
+        // Format as a tee-compatible slave URL
+        return String.format("'%s'", escapedPath);
     }
 }

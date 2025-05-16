@@ -47,6 +47,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class StreamingGUI extends Application {
+    private static final String WAITING_TO_LIVESTREAM_AND_RECORD = "WAITING TO LIVESTREAM AND RECORD ON LOCAL MACHINE";
     private static final String WAITING_TO_RECORD = "WAITING TO RECORD ON LOCAL MACHINE";
     private static final String WAITING_TO_LIVESTREAM = "WAITING TO LIVESTREAM";
     private static final String CURRENTLY_RECORDING = "RECORDING ON LOCAL MACHINE IN PROGRESS";
@@ -77,7 +78,7 @@ public class StreamingGUI extends Application {
     private final StringProperty currentInformationTextProperty = new SimpleStringProperty();
     private final TextField inputTimeNeededToOpenADevice;
     private Thread encodingThread;
-    private final StreamRecorderRunnable streamRecorder = new StreamRecorderRunnable();
+    private final StreamRecorderRunnable streamRecorder = new StreamRecorderRunnable(this);
     private final Settings settings;
     private ScrollPane consoleOutputScrollPane;
     private final SVGPath stopPath = new SVGPath();
@@ -105,6 +106,9 @@ public class StreamingGUI extends Application {
     private final Label nowPlayingLabel = new Label("");
     private final HBox nowPlayingBox = new HBox(nowPlayingLabel);
     private final BooleanProperty isTheOutputAFile = new SimpleBooleanProperty();
+    private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
+    private final BooleanProperty isTheOutputFileAndUrl = new SimpleBooleanProperty();
+
 
     private final TextField playerURLTextField = new TextField();
     private final HBox outputFileHBox = new HBox();
@@ -191,18 +195,29 @@ public class StreamingGUI extends Application {
         inputChooseBetweenUrlOrFile = new ComboBox<>();
         inputChooseBetweenUrlOrFile.getItems().add("Srt URL (livestream)");
         inputChooseBetweenUrlOrFile.getItems().add("File");
+        inputChooseBetweenUrlOrFile.getItems().add("Livestream And File");
 
-        inputChooseBetweenUrlOrFile.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> isTheOutputAFile.setValue("File".equals(newValue)));
+
+        inputChooseBetweenUrlOrFile.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
+            isTheOutputFileAndUrl.setValue(newValue.equals("Livestream And File"));
+            isTheOutputAFile.setValue(newValue.equals("Livestream And File") || newValue.equals("File"));
+            isTheOutputAURL.setValue(newValue.equals("Livestream And File") || newValue.equals("Srt URL (livestream)"));
+            }
+        );
+
+        isTheOutputFileAndUrl.addListener((observable, oldValue, newValue) -> {
+            if(controlConsoleTab!=null) {
+                applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),newValue);}});
 
         isTheOutputAFile.addListener((observable, oldValue, newValue) -> {
             if(controlConsoleTab!=null) {
-                applyStyleOnOutputTypeChange(newValue);}});
+                applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),newValue);}});
 
         inputTimeNeededToOpenADevice = new TextField();
         inputSrtURL = new TextField();
         inputOutputDirectory = new TextField();
         outputFileHBox.visibleProperty().bind(isTheOutputAFile);
-        outputUrlHBox.visibleProperty().bind(isTheOutputAFile.not());
+        outputUrlHBox.visibleProperty().bind(isTheOutputAURL);
         consoleOutputTextFlow = new TextFlow();
         //consoleOutputTextArea = new TextArea();
         startButton = new Button("Start");
@@ -342,15 +357,21 @@ public class StreamingGUI extends Application {
         applySettings();
     }
 
-    private void applyStyleOnOutputTypeChange(Boolean newValue) {
-        if(newValue) {
+    private void applyStyleOnOutputTypeChange(Boolean isOutputLiveStreamAndFile, Boolean isOutputAFile) {
+        if(isOutputLiveStreamAndFile) {
+            updateSceneStyle("livestreaming-and-record");
+            currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM_AND_RECORD);
+            primaryStage.getIcons().setAll(iconRecordingIdle);
+            primaryStage.setTitle("Kadampa Festival - Livestreaming and Recording the session");
+        }
+        else if(isOutputAFile) {
             updateSceneStyle("light-blue");
             currentInformationTextProperty.setValue(WAITING_TO_RECORD);
             primaryStage.getIcons().setAll(iconRecordingIdle);
             primaryStage.setTitle("Kadampa Festival - Recording the session");
         }
         else {
-            updateSceneStyle("");
+            updateSceneStyle("livestream");
             currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM);
             primaryStage.getIcons().setAll(iconLiveStreamIdle);
             primaryStage.setTitle("Kadampa Festival - Live stream the session");
@@ -361,9 +382,11 @@ public class StreamingGUI extends Application {
     private void updateSceneStyle(String color) {
         // Update root style
         //make sure the color style is define in the css
-        if("".equals(color)) {
-            mainScrollPane.getStyleClass().removeAll("bg-light-blue");
-            mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().removeAll("bg-light-blue"));}
+        mainScrollPane.getStyleClass().removeAll("bg-light-blue");
+        mainScrollPane.getStyleClass().removeAll("bg-livestreaming-and-record");
+        mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().removeAll("bg-light-blue"));
+        mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().removeAll("bg-livestreaming-and-record"));
+
         if(!("".equals(color))) {
             mainScrollPane.getStyleClass().add("bg-" + color);
             // Update styles of the children
@@ -493,6 +516,10 @@ public class StreamingGUI extends Application {
         return mainScrollPane;
     }
 
+
+    public ComboBox<String>[] getInputAudioSources() {
+        return inputAudioSources;
+    }
     private Node buildTabInfo() {
         VBox infoVBox = new VBox(5);
         infoVBox.setPadding(new Insets(20,10,10,10));
@@ -620,7 +647,10 @@ public class StreamingGUI extends Application {
         blinkingTimeLine.stop();
         nowPlayingBox.setStyle("-fx-background-color: -red-color;");
         startButton.setDisable(streamRecorder.isAliveProperty().getValue());
-        if(isTheOutputAFile.get())
+        if(isTheOutputFileAndUrl.get()) {
+            primaryStage.getIcons().setAll(iconRecordingIdle);
+        }
+        else if(isTheOutputAFile.get())
             primaryStage.getIcons().setAll(iconRecordingIdle);
         else
             primaryStage.getIcons().setAll(iconLiveStreamIdle);
@@ -828,6 +858,7 @@ public class StreamingGUI extends Application {
         inputGrid2.add(outputUrlHBox, 0, row);
         GridPane.setColumnSpan(outputUrlHBox, 6);
         if(inputSrtURL.getText()==null) inputSrtURL.setText("");
+        row++;
 
         Label outputDirectoryinfoLabel = new Label("?");
         outputDirectoryinfoLabel.getStyleClass().add("info-for-tooltip");
@@ -1139,7 +1170,7 @@ public class StreamingGUI extends Application {
             handleClose();
         });
         primaryStage.show();
-        applyStyleOnOutputTypeChange(isTheOutputAFile.get());
+        applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),isTheOutputAFile.get());
 
     }
 
@@ -1170,7 +1201,11 @@ public class StreamingGUI extends Application {
         streamRecorder.setAudioBufferSize(inputAudioSourceBuffer.getValue());
         streamRecorder.setVideoBitrate(inputVideoBitrate.getValue());
         streamRecorder.setVideoBufferSize(inputVideoSourceBuffer.getValue());
-        streamRecorder.setIsTheOutputAFile(isTheOutputAFile.get());
+
+        if(isTheOutputFileAndUrl.get())  streamRecorder.setOutputType(StreamRecorderRunnable.FILE_AND_URL);
+        else if(isTheOutputAFile.get())  streamRecorder.setOutputType(StreamRecorderRunnable.FILE);
+        else if(isTheOutputAURL.get())   streamRecorder.setOutputType(StreamRecorderRunnable.URL);
+
         streamRecorder.setFps(Integer.parseInt(inputFramePerSecond.getValue()));
         textAreaInfo.setText(streamRecorder.getFFMpegCommand());
         playerURLTextField.setText(buildPlayerURL());

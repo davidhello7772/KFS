@@ -10,10 +10,26 @@
     -red-color-hover: #de0000;
     -orange-color: #EE7130;
     -output-is-file-bg-color: #DCF9F8;
+    -output-is-livestream-and-file-bg-color: #ffd4fb;
 }
 
 .bg-light-blue {
   -fx-background-color: -output-is-file-bg-color;
+}
+
+.bg-livestreaming-and-record {
+  -fx-background-color: -output-is-livestream-and-file-bg-color;
+}
+
+.bg-livestreaming-and-record .tab-pane .tab {
+    -fx-background-color: #f8c3fa;
+}
+
+.bg-livestreaming-and-record .tab-pane .tab-header-area .tab-header-background {
+     -fx-background-color: #ffd4fb;
+}
+.bg-light-blue .tab-pane .tab:selected {
+    -fx-background-color: -output-is-file-bg-color;
 }
 
 
