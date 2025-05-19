@@ -179,7 +179,7 @@ public class StreamRecorderRunnable implements Runnable {
                 //For the english language, the noiseReduction value has a different meaning that the other languages
                 //Here, 3 means we use 100% of the filter, 2 means 75% and 1 means 50%
                 //We also use the bd model that is trained to remove general noise but not human noises
-                //We had 8dB because thefilter decrease the sound
+                //We had 8dB because the filter decrease the sound
                 if(noiseReductionValues.get(i - 1)==1) {
                     filterCommand.append(",arnndn=model='/rnmodel/bd.rnnn:mix=0.3'");
                 }
@@ -192,7 +192,7 @@ public class StreamRecorderRunnable implements Runnable {
 
 
                 filterCommand.append("[englishfiltered").append(i).append("];");
-                filterCommand.append("[prayers").append(i).append("][englishfiltered").append(i).append("]amix=inputs=2,volume=6dB").append("[outmixed").append(i).append("];");
+                filterCommand.append("[prayers").append(i).append("][englishfiltered").append(i).append("]amix=inputs=2,volume=7.6dB").append("[outmixed").append(i).append("];");
                 mapCommand.add("-map");
                 mapCommand.add("\"[outmixed" + i + "]\";");
 
@@ -213,7 +213,7 @@ public class StreamRecorderRunnable implements Runnable {
                     filterCommand.append(",arnndn=model='/rnmodel/sh.rnnn'");
                 }
                 filterCommand.append("[outfiltered").append(i).append("];");
-                filterCommand.append("[prayers").append(i).append("][englishToBeMixed").append(i).append("][outfiltered").append(i).append("]amix=inputs=3,volume=8dB").append("[outmixed").append(i).append("];");
+                filterCommand.append("[prayers").append(i).append("][englishToBeMixed").append(i).append("][outfiltered").append(i).append("]amix=inputs=3,volume=9.3dB").append("[outmixed").append(i).append("];");
                 mapCommand.add("-map");
                 mapCommand.add("\"[outmixed" + i + "]\";");
             }
