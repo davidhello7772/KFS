@@ -30,7 +30,7 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
         this.setTitle("Level Meters");
 
         for (int i = 0; i < inputAudioSources.length; i++) {
-            String language = Settings.LANGUAGE_NAMES[i];
+            String language = Settings.LANGUAGES[i].name();
             String hexColor = languageColorsMap.getOrDefault(language, "#4E342E");
             LevelMeter vuMeter = new LevelMeter(language, getMixerInfo(inputAudioSources[i].getValue()), inputAudioSourcesChannel[i].getValue(), Color.web(hexColor), this);
             vuMeters.put(language, vuMeter);

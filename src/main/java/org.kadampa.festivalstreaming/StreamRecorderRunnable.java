@@ -19,7 +19,7 @@ public class StreamRecorderRunnable implements Runnable {
 
     private String srtUrl;
     private String outputDirectory;
-    private StreamingGUI appContext;
+    private final StreamingGUI appContext;
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();
     private final List<String> audioInputsChannel = new ArrayList<>();
@@ -59,9 +59,13 @@ public class StreamRecorderRunnable implements Runnable {
             Executors.newSingleThreadExecutor().submit(errorStreamGobbler);
             process.waitFor();
         } catch (IOException | InterruptedException e) {
-            e.printStackTrace();
-            if(monitor!=null) monitor.stopMonitoring();
-            stop();
+            if (appContext.getSettings().isDevelopmentMode()) {
+                throw new RuntimeException(e);
+            } else {
+                e.printStackTrace();
+                if(monitor!=null) monitor.stopMonitoring();
+                stop();
+            }
         }
     }
 
@@ -93,7 +97,6 @@ public class StreamRecorderRunnable implements Runnable {
         StringBuilder filterCommand = new StringBuilder();
         int i = 0;
         int j = 0;
-        int videoDelay=0;
         int audioDelay = delay;
         int languageCount = 0;
 
@@ -126,13 +129,13 @@ public class StreamRecorderRunnable implements Runnable {
             //input 2 is English (not to be mixed with other language, but need the  prayer to be added)
             if(i==1) {
                 //Here it's the prayer
-                if(audioInputsChannel.get(i-1).equals("Join"))
+                if(audioInputsChannel.get(0).equals("Join"))
                     filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
                 else
                     filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
-                if(audioInputsChannel.get(i-1).equals("Left"))
+                if(audioInputsChannel.get(0).equals("Left"))
                     filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
-                if(audioInputsChannel.get(i-1).equals("Right"))
+                if(audioInputsChannel.get(0).equals("Right"))
                     filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
                 //We new duplicate prayers to use it in the different mixes
                 //The first 2 channel don't have the mix, because they are the prayers itself and the english to be mixed with the translation
@@ -219,75 +222,16 @@ public class StreamRecorderRunnable implements Runnable {
             }
         }
 
-        if(!appContext.getInputAudioSources()[2].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"English\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=eng");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[2].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Español\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=spa");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[4].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Français\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=fra");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[5].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Português\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=por");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[6].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Deutsch\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=deu");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[7].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"廣東話\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=chi");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[8].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"普通话\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=chi");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[9].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Tiếng%20Việt\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=vie");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[10].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Italiano\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=ita");
-            languageCount++;
-        }
-        if(!appContext.getInputAudioSources()[11].getValue().equals("Not Used")) {
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"ελληνικά\"");
-            parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=grc");
-            languageCount++;
+        for (int k = 2; k < Settings.LANGUAGES.length; k++) {
+            if (!appContext.getInputAudioSources()[k].getValue().equals("Not Used")) {
+                parameterCommand.add("-metadata:s:a:" + languageCount);
+                // Use nativeName if available, otherwise use name
+                String title = Settings.LANGUAGES[k].nativeName() != null ? Settings.LANGUAGES[k].nativeName() : Settings.LANGUAGES[k].name();
+                parameterCommand.add("title=\"" + title + "\"");
+                parameterCommand.add("-metadata:s:a:" + languageCount);
+                parameterCommand.add("language=" + Settings.LANGUAGES[k].code());
+                languageCount++;
+            }
         }
 
 
@@ -343,7 +287,6 @@ public class StreamRecorderRunnable implements Runnable {
             outputCommand.add("tee");
             outputCommand.add("\"[f=mpegts:onfail=ignore]" + formatForFFmpegTee(outputDirectory + File.separatorChar + fileName) + " | [f=mpegts]"+ srtUrl +"\"");
 
-            int k =0;
         } else if(outputType==FILE) {
                 outputCommand.add("\"" + outputDirectory + File.separatorChar + fileName + "\"");
             }

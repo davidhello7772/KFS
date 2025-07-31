@@ -4,23 +4,42 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 public class Settings implements Serializable {
-    private static final String[] DEFAULT_LANGUAGE_COLORS = {
-            "#4E342E", "#0D47A1", "#1B5E20", "#E65100", "#4A148C",
-            "#880E4F", "#212121", "#B71C1C", "#F57F17", "#263238", "#004D40", "#827717"
-    };
-    static final String[] LANGUAGE_NAMES = {
-            "Prayers (for mix)", "English (for mix)", "English", "Spanish", "French",
-            "Portuguese", "German", "Cantonese", "Mandarin", "Vietnamese", "Italian", "Finnish"
+
+    public static final boolean DEVELOPMENT_MODE = false;
+
+    public record Language(String name, String nativeName, String code) {
+        public Language(String name) {
+            this(name, null, null);
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    public static final Language[] LANGUAGES = {
+            new Language("Prayers"),
+            new Language("English (for mix)"),
+            new Language("English", "English", "eng"),
+            new Language("Spanish", "Español", "spa"),
+            new Language("French", "Français", "fra"),
+            new Language("Portuguese", "Português", "por"),
+            new Language("German", "Deutsch", "deu"),
+            new Language("Cantonese", "廣東話", "chi"),
+            new Language("Mandarin", "普通话", "chi"),
+            new Language("Vietnamese", "Tiếng_Việt", "vie"),
+            new Language("Italian", "Italiano", "ita"),
+            new Language("Greek", "Ελληνικά", "grc")
     };
 
     public Settings() {
         // Initialize default colors for languages
-        for (int i = 0; i < LANGUAGE_NAMES.length; i++) {
-            if (i < DEFAULT_LANGUAGE_COLORS.length) {
-                languageColors.put(LANGUAGE_NAMES[i], DEFAULT_LANGUAGE_COLORS[i]);
-            }
+        for (Language language : LANGUAGES) {
+            languageColors.put(language.name(), "#4E342E");
         }
     }
     @Serial
@@ -46,6 +65,7 @@ public class Settings implements Serializable {
     private String audioBitrate; // Add audio bitrate field
     private String fps; // Add FPS field
     private String enMixDelay;
+    private boolean developmentMode = false;
 
     public Map<String, String> getAudioSources() {
         return audioSources;
@@ -63,7 +83,7 @@ public class Settings implements Serializable {
     }
 
     public String getVideoSource() {
-        return videoSource;
+        return Objects.requireNonNullElse(videoSource, "");
     }
 
     public void setVideoSource(String videoSource) {
@@ -71,10 +91,10 @@ public class Settings implements Serializable {
     }
 
     public String getDelay() {
-        return delay;
+        return Objects.requireNonNullElse(delay, "0");
     }
     public String getEnMixDelay() {
-        return enMixDelay;
+        return Objects.requireNonNullElse(enMixDelay, "0");
     }
 
     public void setEnMixDelay(String delay) {
@@ -86,7 +106,7 @@ public class Settings implements Serializable {
     }
 
     public String getPixFormat() {
-        return pixFormat;
+        return Objects.requireNonNullElse(pixFormat, "");
     }
 
     public void setPixFormat(String pixFormat) {
@@ -94,7 +114,7 @@ public class Settings implements Serializable {
     }
 
     public String getOutputType() {
-        return outputType;
+        return Objects.requireNonNullElse(outputType, "");
     }
 
     public void setOutputType(String outputType) {
@@ -102,7 +122,7 @@ public class Settings implements Serializable {
     }
 
     public String getSrtDef() {
-        return srtDef;
+        return Objects.requireNonNullElse(srtDef, "");
     }
 
     public void setSrtDef(String srtDef) {
@@ -110,7 +130,7 @@ public class Settings implements Serializable {
     }
 
     public String getFileDef() {
-        return fileDef;
+        return Objects.requireNonNullElse(fileDef, "");
     }
 
     public void setFileDef(String fileDef) {
@@ -118,7 +138,7 @@ public class Settings implements Serializable {
     }
 
     public String getEncoder() {
-        return encoder;
+        return Objects.requireNonNullElse(encoder, "");
     }
 
     public void setEncoder(String encoder) {
@@ -126,7 +146,7 @@ public class Settings implements Serializable {
     }
 
     public String getSrtURL() {
-        return srtURL;
+        return Objects.requireNonNullElse(srtURL, "");
     }
 
     public void setSrtURL(String srtURL) {
@@ -134,7 +154,7 @@ public class Settings implements Serializable {
     }
 
     public String getOutputDirectory() {
-        return outputDirectory;
+        return Objects.requireNonNullElse(outputDirectory, "");
     }
 
     public void setOutputDirectory(String outputDirectory) {
@@ -142,7 +162,7 @@ public class Settings implements Serializable {
     }
 
     public String getAudioBitrate() {
-        return audioBitrate;
+        return Objects.requireNonNullElse(audioBitrate, "");
     }
 
     public void setAudioBitrate(String audioBitrate) {
@@ -150,7 +170,7 @@ public class Settings implements Serializable {
     }
 
     public String getFps() {
-        return fps;
+        return Objects.requireNonNullElse(fps, "");
     }
 
     public void setFps(String fps) {
@@ -158,7 +178,7 @@ public class Settings implements Serializable {
     }
 
     public String getVideoPID() {
-        return videoPID;
+        return Objects.requireNonNullElse(videoPID, "");
     }
 
     public void setVideoPID(String videoPID) {
@@ -178,22 +198,30 @@ public class Settings implements Serializable {
     }
 
     public String getVideoBitrate() {
-        return videoBitrate;
+        return Objects.requireNonNullElse(videoBitrate, "");
     }
 
     public String getVideoBuffer() {
-        return videoBuffer;
+        return Objects.requireNonNullElse(videoBuffer, "");
     }
 
     public String getAudioBuffer() {
-        return audioBuffer;
+        return Objects.requireNonNullElse(audioBuffer, "");
     }
 
     public String getTimeNeededToOpenADevice() {
-        return timeNeededToOpenADevice;
+        return Objects.requireNonNullElse(timeNeededToOpenADevice, "0");
     }
 
     public void setTimeNeededToOpenADevice(String timeNeededToOpenADevice) {
         this.timeNeededToOpenADevice = timeNeededToOpenADevice;
+    }
+
+    public boolean isDevelopmentMode() {
+        return developmentMode;
+    }
+
+    public void setDevelopmentMode(boolean developmentMode) {
+        this.developmentMode = developmentMode;
     }
 }

@@ -108,10 +108,8 @@ public class StreamingGUI extends Application {
     private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputFileAndUrl = new SimpleBooleanProperty();
     private LevelMeterPanel vuMeterPanel;
-    private final String[] languageNames = {
-            "Prayers (for mix)", "English (for mix)", "English", "Spanish", "French",
-            "Portuguese", "German", "Cantonese", "Mandarin", "Vietnamese", "Italian", "Finnish"
-    };
+
+    
 
 
     private final TextField playerURLTextField = new TextField();
@@ -275,7 +273,11 @@ public class StreamingGUI extends Application {
                 consoleOutputTextFlow.getChildren().clear();
                 startEncodingThread();
             } catch (Exception e) {
-                throw new RuntimeException(e);
+                if (Settings.DEVELOPMENT_MODE) {
+                    throw new RuntimeException(e);
+                } else {
+                    Platform.runLater(()->appendToConsole(e.toString(),"",Color.RED));
+                }
             }
         });
 
@@ -358,6 +360,10 @@ public class StreamingGUI extends Application {
         }
         // Load settings
         settings = SettingsUtil.loadSettings();
+        // Check for development mode system property
+        if (Boolean.parseBoolean(System.getProperty("kfs.developmentMode"))) {
+            settings.setDevelopmentMode(true);
+        }
     }
 
     private void applyStyleOnOutputTypeChange(Boolean isOutputLiveStreamAndFile, Boolean isOutputAFile) {
@@ -400,7 +406,7 @@ public class StreamingGUI extends Application {
         Map<String, String> audioSettings = settings.getAudioSources();
         for (int i = 0; i < inputAudioSources.length; i++) {
             inputAudioSources[i].setValue(audioSettings.getOrDefault("audio" + i, "Not Used"));
-            String languageKey = languageNames[i];
+            String languageKey = Settings.LANGUAGES[i].name();
             ColorPicker colorPicker = languageColorPickers.get(languageKey);
             if (colorPicker != null) {
                 String hexColor = settings.getLanguageColors().get(languageKey);
@@ -538,6 +544,10 @@ public class StreamingGUI extends Application {
     public ComboBox<String>[] getInputAudioSources() {
         return inputAudioSources;
     }
+
+    public Settings getSettings() {
+        return settings;
+    }
     private Node buildTabInfo() {
         VBox infoVBox = new VBox(5);
         infoVBox.setPadding(new Insets(20,10,10,10));
@@ -586,27 +596,27 @@ public class StreamingGUI extends Application {
         int pidVideo = Integer.parseInt(inputVideoPid.getText());
         videoPID.setText("PID Video: " + pidVideo);
         int currentAudioPID =  pidVideo+1;
-        englishPID.setText("PID English: " + currentAudioPID);
+        englishPID.setText("PID " + Settings.LANGUAGES[2].name() + ": " + currentAudioPID);
         currentAudioPID ++;
-        spanishPID.setText("PID Spanish: " + currentAudioPID);
+        spanishPID.setText("PID " + Settings.LANGUAGES[3].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        frenchPID.setText("PID French: " + currentAudioPID);
+        frenchPID.setText("PID " + Settings.LANGUAGES[4].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        portuguesePID.setText("PID Portuguese: " + currentAudioPID);
+        portuguesePID.setText("PID " + Settings.LANGUAGES[5].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        germanPID.setText("PID German: " + currentAudioPID);
+        germanPID.setText("PID " + Settings.LANGUAGES[6].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        cantonesePID.setText("PID Cantonese: " + currentAudioPID);
+        cantonesePID.setText("PID " + Settings.LANGUAGES[7].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        mandarinPID.setText("PID Mandarin: " + currentAudioPID);
+        mandarinPID.setText("PID " + Settings.LANGUAGES[8].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        vietnamesePID.setText("PID Vietnamese: " + currentAudioPID);
+        vietnamesePID.setText("PID " + Settings.LANGUAGES[9].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
-        italianPID.setText("PID Italian: " + currentAudioPID);
+        italianPID.setText("PID " + Settings.LANGUAGES[10].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
         finishPID.setText("PID Finish: " + currentAudioPID);
         currentAudioPID ++;
-        greekPID.setText("PID Greek: " + currentAudioPID);
+        greekPID.setText("PID " + Settings.LANGUAGES[11].nativeName() + ": " + currentAudioPID);
         currentAudioPID ++;
         extraLanguagePID.setText("PID extraLanguage: " + currentAudioPID);
     }
@@ -723,14 +733,18 @@ public class StreamingGUI extends Application {
         // Create an HBox to hold both labels
         HBox videoInputLabelHBox = new HBox(1,videoInputLabel, videoInputinfoLabel);
         videoInputLabelHBox.setAlignment(Pos.CENTER_LEFT);
+        inputGrid.add(videoInputLabelHBox, 0, row);
+        inputGrid.add(inputVideoSource, 1, row);
+        inputVideoSource.setPrefWidth(450);
 
         row++;
         //If it's empty, we select the first element
         if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
-        addLanguageRow(inputGrid, row, "Prayers (for mix):", inputAudioSources[0], inputAudioSourcesChannel[0],null,null);
+
+        addLanguageRow(inputGrid, row, Settings.LANGUAGES[0].name() + ":", inputAudioSources[0], inputAudioSourcesChannel[0],null,Settings.LANGUAGES[0].name());
         Label EnMixDelayInfoLabel = new Label("?");
         EnMixDelayInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip toolt = new Tooltip("The delay we put on the englih mix so it synchronise the english coming  the speakers throw the microphone to avoid echo");
+        Tooltip toolt = new Tooltip("The delay we put on the english mix so it synchronise the english coming  the speakers throw the microphone to avoid echo");
         Tooltip.install(EnMixDelayInfoLabel, toolt);
         toolt.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
         toolt.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
@@ -741,9 +755,8 @@ public class StreamingGUI extends Application {
         HBox EnMixDelayLabelHBox = new HBox(1,EnMixDelayLabel,EnMixDelayInfoLabel);  // 5 is the spacing between the labels
         inputGrid.add(EnMixDelayLabelHBox, 3, row);
         row++;
-        addLanguageRow(inputGrid, row, "English Mix:", inputAudioSources[1], inputAudioSourcesChannel[1],null, languageNames[1]);
+        addLanguageRow(inputGrid, row, Settings.LANGUAGES[1].name(), inputAudioSources[1], inputAudioSourcesChannel[1],null, Settings.LANGUAGES[1].name());
         inputGrid.add(inputenMixDelay, 3, row);
-
         row++;
         Separator separator = new Separator();
         separator.setPrefWidth(WINDOW_WIDTH-50);
@@ -763,25 +776,10 @@ public class StreamingGUI extends Application {
         HBox noiseReductionLabelHBox = new HBox(1,noiseReductionLabel,noiseReductionInfoLabel);  // 5 is the spacing between the labels
         inputGrid.add(noiseReductionLabelHBox, 3, row);
         row++;
-        addLanguageRow(inputGrid, row, "English:", inputAudioSources[2], inputAudioSourcesChannel[2],inputNoiseReductionValues[2], languageNames[2]);
-        row++;
-        addLanguageRow(inputGrid, row, "Spanish:", inputAudioSources[3], inputAudioSourcesChannel[3],inputNoiseReductionValues[3], languageNames[3]);
-        row++;
-        addLanguageRow(inputGrid, row, "French:", inputAudioSources[4], inputAudioSourcesChannel[4],inputNoiseReductionValues[4], languageNames[4]);
-        row++;
-        addLanguageRow(inputGrid, row, "Portuguese:", inputAudioSources[5], inputAudioSourcesChannel[5],inputNoiseReductionValues[5], languageNames[5]);
-        row++;
-        addLanguageRow(inputGrid, row, "German:", inputAudioSources[6], inputAudioSourcesChannel[6],inputNoiseReductionValues[6], languageNames[6]);
-        row++;
-        addLanguageRow(inputGrid, row, "Cantonese:", inputAudioSources[7], inputAudioSourcesChannel[7],inputNoiseReductionValues[7], languageNames[7]);
-        row++;
-        addLanguageRow(inputGrid, row, "Mandarin:", inputAudioSources[8], inputAudioSourcesChannel[8],inputNoiseReductionValues[8], languageNames[8]);
-        row++;
-        addLanguageRow(inputGrid, row, "Vietnamese:", inputAudioSources[9], inputAudioSourcesChannel[9],inputNoiseReductionValues[9], languageNames[9]);
-        row++;
-        addLanguageRow(inputGrid, row, "Italian:", inputAudioSources[10], inputAudioSourcesChannel[10],inputNoiseReductionValues[10], languageNames[10]);
-        row++;
-        addLanguageRow(inputGrid, row, "Greek:", inputAudioSources[11], inputAudioSourcesChannel[11],inputNoiseReductionValues[11], languageNames[11]);
+        for (int i = 2; i < Settings.LANGUAGES.length; i++) {
+            addLanguageRow(inputGrid, row, Settings.LANGUAGES[i].name() + ":", inputAudioSources[i], inputAudioSourcesChannel[i], inputNoiseReductionValues[i], Settings.LANGUAGES[i].name());
+            row++;
+        }
 
         int comboWith = 100;
         ColumnConstraints col1 = new ColumnConstraints();
@@ -1133,20 +1131,7 @@ public class StreamingGUI extends Application {
         saveHBox.setAlignment(Pos.CENTER);
         saveHBox.setPadding(new Insets(20,0,20,0));
 
-        Button showVUMetersButton = new Button("Show VU Meters");
-        showVUMetersButton.getStyleClass().add("event-button");
-        showVUMetersButton.setOnAction(event -> {
-            if (vuMeterPanel.isShowing()) {
-                vuMeterPanel.toFront();
-            } else {
-                vuMeterPanel.show();
-            }
-        });
-        HBox vuMeterHBox = new HBox(showVUMetersButton);
-        vuMeterHBox.setAlignment(Pos.CENTER);
-        vuMeterHBox.setPadding(new Insets(0,0,20,0));
-
-        return new VBox(inputGrid,inputGrid2,saveHBox, vuMeterHBox);
+        return new VBox(inputGrid,inputGrid2,saveHBox);
     }
 
     @Override
@@ -1260,7 +1245,11 @@ public class StreamingGUI extends Application {
             try {
                 streamRecorder.run();
             } catch (Exception e) {
-                appendToConsole(e.toString(),"",Color.RED);
+                if (settings.isDevelopmentMode()) {
+                    throw new RuntimeException(e);
+                } else {
+                    Platform.runLater(()->appendToConsole(e.toString(),"",Color.RED));
+                }
             }
         });
         encodingThread.start();
@@ -1275,58 +1264,20 @@ public class StreamingGUI extends Application {
             rValue = outputUrl.substring(startIndex, commaIndex);
         }
         String baseURL = "https://player.castr.com/"+rValue;
-        String parameters = "?tracks=";
+        StringBuilder parameters = new StringBuilder("?tracks=");
         boolean firstParameter = true;
-        if(!inputAudioSources[2].getValue().equals("Not Used")) {
-            parameters +="English";
-            firstParameter = false;
+        for (int i = 2; i < Settings.LANGUAGES.length; i++) {
+            if (!inputAudioSources[i].getValue().equals("Not Used")) {
+                if (!firstParameter) {
+                    parameters.append(",");
+                }
+                // Use nativeName if available, otherwise use name
+                String languageDisplayName = Settings.LANGUAGES[i].nativeName() != null ? Settings.LANGUAGES[i].nativeName() : Settings.LANGUAGES[i].name();
+                parameters.append(languageDisplayName.replace(" ", "%20")); // URL encode spaces
+                firstParameter = false;
+            }
         }
-        if(!inputAudioSources[3].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Español";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[4].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Français";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[5].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Português";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[6].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Deutsch";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[7].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="廣東話";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[8].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="普通话";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[9].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Tiếng%20Việt";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[10].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Italiano";
-            firstParameter = false;
-        }
-        if(!inputAudioSources[11].getValue().equals("Not Used")) {
-            if(!firstParameter)  parameters +=",";
-            parameters +="Suomi";
-            firstParameter = false;
-        }
-        return baseURL+parameters;
+        return baseURL + parameters.toString();
     }
 
     private boolean checkParameters() {
@@ -1384,12 +1335,14 @@ public class StreamingGUI extends Application {
             appendToConsole("Please Fill the Time needed to open a device Field (See Tooltip for help)","",Color.RED);
             result= false;
         }
-        if(inputChooseBetweenUrlOrFile.getValue().equals("File")) {
+        String outputType = inputChooseBetweenUrlOrFile.getValue();
+
+        if (outputType.equals("File") || outputType.equals("Livestream And File")) {
             String directory = inputOutputDirectory.getText();
             File file = new File(directory);
             if (!file.isDirectory()) {
-                    appendToConsole(directory + " is not a directory. Please enter a valid directory for the file output.","",Color.RED);
-                    result = false;
+                appendToConsole(directory + " is not a directory. Please enter a valid directory for the file output.","",Color.RED);
+                result = false;
             }
             else {
                 long usableSpace = file.getUsableSpace();
@@ -1402,11 +1355,12 @@ public class StreamingGUI extends Application {
                 }
             }
         }
-        else {
+
+        if (outputType.equals("Srt URL (livestream)") || outputType.equals("Livestream And File")) {
             String url = inputSrtURL.getText();
             if (!url.startsWith("srt://")) {
                 appendToConsole(url + " is not a valid srt url. Please enter a valid srt url to stream.","",Color.RED);
-                return false;
+                result = false;
             }
         }
 
