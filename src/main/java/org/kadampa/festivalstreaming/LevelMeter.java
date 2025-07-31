@@ -43,7 +43,7 @@ public class LevelMeter {
     private static final double YELLOW_THRESHOLD_DB = -6.0; // (−18 dBFS + 12)
     private static final double RED_THRESHOLD_DB = 6.0;      // (−6 dBFS + 12)
     private static final double METER_HEIGHT = 300;
-    private static final double METER_WIDTH = 60;
+    private static final double METER_WIDTH = 30;
     private static final double MAX_SAMPLE_VALUE = 32768.0;
 
     private volatile double currentDb = MIN_DB;
@@ -175,7 +175,7 @@ public class LevelMeter {
 
     private void updateStatusIndicator() {
         // This will be updated based on audio levels in the animation
-        statusIndicator.setFill(Color.rgb(39, 174, 96)); // Default green
+        statusIndicator.setFill(Color.rgb(100, 100, 100)); // Default grey
         statusIndicator.setStroke(Color.rgb(255, 255, 255, 0.3));
         statusIndicator.setStrokeWidth(2);
 
@@ -358,7 +358,7 @@ public class LevelMeter {
 
     private void updateStatusIndicator(long now) {
         Color statusColor;
-
+        Color glowColor = Color.rgb(100, 100, 100, 0.8);
         // If peak flash is active, indicator is RED. This is the highest priority.
         if (peakFlashActive) {
             statusColor = Color.RED;
@@ -375,27 +375,22 @@ public class LevelMeter {
         else {
             if (displayDb > RED_THRESHOLD_DB) {
                 statusColor = Color.RED;
+                glowColor = Color.rgb(255, 0, 0, 0.8);
             } else if (displayDb > YELLOW_THRESHOLD_DB) {
                 statusColor = Color.YELLOW;
+                glowColor = Color.rgb(255, 255, 0, 0.8);
             } else {
                 statusColor = Color.LIMEGREEN;
+                glowColor = Color.rgb(50, 205, 50, 0.8);
+                if(displayDb<=-40) {
+                    statusColor = Color.GRAY;
+                    glowColor = Color.rgb(100, 100, 100, 0.8);
+                }
             }
         }
 
-        // Now set fill and glow based on statusColor
-        Color glowColor;
-        if (statusColor == Color.RED) {
-            glowColor = Color.rgb(255, 0, 0, 0.8);
-        } else if (statusColor == Color.YELLOW) {
-            glowColor = Color.rgb(255, 255, 0, 0.8);
-        } else { // LIMEGREEN
-            glowColor = Color.rgb(50, 205, 50, 0.8);
-        }
-
         statusIndicator.setFill(statusColor);
-        statusGlow.setRadius(15);
         statusGlow.setColor(glowColor);
-        statusIndicator.setEffect(statusGlow);
     }
 
     // Keep the existing drawMeter, calculateContrastColor and other methods unchanged
@@ -403,7 +398,7 @@ public class LevelMeter {
         double totalRange = MAX_DB - MIN_DB;
         double dbClamped = Math.max(MIN_DB, Math.min(MAX_DB, displayDb));
 
-        double greenHeight = 0, yellowHeight = 0, redHeight = 0;
+        double greenHeight, yellowHeight = 0, redHeight = 0;
 
         double yellowThresholdY = METER_HEIGHT * (1 - (YELLOW_THRESHOLD_DB - MIN_DB) / totalRange);
         double redThresholdY = METER_HEIGHT * (1 - (RED_THRESHOLD_DB - MIN_DB) / totalRange);
@@ -485,7 +480,7 @@ public class LevelMeter {
         if ("Join".equalsIgnoreCase(channelDisplay)) {
             text += " - Stereo";
         } else {
-            text += " - loffdsn ggodd fdjdfjf coivsmsq dsqkqks dskd" + channelDisplay;
+            text += " - " + channelDisplay;
         }
         audioInterfaceLabel.setText(text);
     }
