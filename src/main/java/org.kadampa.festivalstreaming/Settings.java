@@ -6,10 +6,28 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class Settings implements Serializable {
+    private static final String[] DEFAULT_LANGUAGE_COLORS = {
+            "#4E342E", "#0D47A1", "#1B5E20", "#E65100", "#4A148C",
+            "#880E4F", "#212121", "#B71C1C", "#F57F17", "#263238", "#004D40", "#827717"
+    };
+    static final String[] LANGUAGE_NAMES = {
+            "Prayers (for mix)", "English (for mix)", "English", "Spanish", "French",
+            "Portuguese", "German", "Cantonese", "Mandarin", "Vietnamese", "Italian", "Finnish"
+    };
+
+    public Settings() {
+        // Initialize default colors for languages
+        for (int i = 0; i < LANGUAGE_NAMES.length; i++) {
+            if (i < DEFAULT_LANGUAGE_COLORS.length) {
+                languageColors.put(LANGUAGE_NAMES[i], DEFAULT_LANGUAGE_COLORS[i]);
+            }
+        }
+    }
     @Serial
     private static final long serialVersionUID = 1L;
     private final Map<String, String> audioSources = new HashMap<>();
     private final Map<String, String> audioSourcesChannel = new HashMap<>();
+    private final Map<String, String> languageColors = new HashMap<>();
     private final Map<String,String> noiseReductionLevel = new HashMap<>();
     private String videoSource;
     private String videoBitrate;
@@ -38,6 +56,10 @@ public class Settings implements Serializable {
     }
     public Map<String, String> getNoiseReductionLevel() {
         return noiseReductionLevel;
+    }
+
+    public Map<String, String> getLanguageColors() {
+        return languageColors;
     }
 
     public String getVideoSource() {

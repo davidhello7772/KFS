@@ -38,10 +38,7 @@ import javax.sound.sampled.Line;
 import javax.sound.sampled.Mixer;
 import javax.sound.sampled.TargetDataLine;
 import java.io.File;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -55,6 +52,7 @@ public class StreamingGUI extends Application {
     private final ComboBox<String>[] inputAudioSources;
     private final ComboBox<String>[] inputAudioSourcesChannel;
     private final ComboBox<String>[] inputNoiseReductionValues;
+    private final Map<String, ColorPicker> languageColorPickers = new HashMap<>();
     private final TextField inputVideoPid;
     private final TextField inputenMixDelay;
     private final ComboBox<String> inputVideoSource;
@@ -87,6 +85,7 @@ public class StreamingGUI extends Application {
     private static final int WINDOW_HEIGHT = 950;
     private static final double TOOLTIP_DELAY = 0.2;
     private static final int TOOLTIP_DURATION=10;
+    private static final double LABEL_PREF_WIDTH = 150;
     private final Timeline blinkingTimeLine;
     private boolean manualScroll = false;
     private boolean doWeAutomaticallyScrollAtBottom = true;
@@ -108,6 +107,11 @@ public class StreamingGUI extends Application {
     private final BooleanProperty isTheOutputAFile = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputFileAndUrl = new SimpleBooleanProperty();
+    private LevelMeterPanel vuMeterPanel;
+    private final String[] languageNames = {
+            "Prayers (for mix)", "English (for mix)", "English", "Spanish", "French",
+            "Portuguese", "German", "Cantonese", "Mandarin", "Vietnamese", "Italian", "Finnish"
+    };
 
 
     private final TextField playerURLTextField = new TextField();
@@ -354,7 +358,6 @@ public class StreamingGUI extends Application {
         }
         // Load settings
         settings = SettingsUtil.loadSettings();
-        applySettings();
     }
 
     private void applyStyleOnOutputTypeChange(Boolean isOutputLiveStreamAndFile, Boolean isOutputAFile) {
@@ -397,12 +400,24 @@ public class StreamingGUI extends Application {
         Map<String, String> audioSettings = settings.getAudioSources();
         for (int i = 0; i < inputAudioSources.length; i++) {
             inputAudioSources[i].setValue(audioSettings.getOrDefault("audio" + i, "Not Used"));
+            String languageKey = languageNames[i];
+            ColorPicker colorPicker = languageColorPickers.get(languageKey);
+            if (colorPicker != null) {
+                String hexColor = settings.getLanguageColors().get(languageKey);
+                if (hexColor != null) {
+                    colorPicker.setValue(Color.web(hexColor));
+                } else {
+                    // Set a default color if not found in settings
+                    colorPicker.setValue(Color.GREY); // or Color.web("#808080") for a specific grey
+                }
+            }
          }
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
             inputAudioSourcesChannel[i].setValue(settings.getAudioSourcesChannel().getOrDefault("audioChannel" + i, ""));
              }
         for (int i = 0; i < inputNoiseReductionValues.length; i++) {
-            inputNoiseReductionValues[i].setValue(settings.getNoiseReductionLevel().getOrDefault("noiseReductionLevel" + i, "0"));
+            if(settings.getNoiseReductionLevel()!=null)
+                inputNoiseReductionValues[i].setValue(settings.getNoiseReductionLevel().getOrDefault("noiseReductionLevel" + i, "0"));
         }
 
         for (int i = 0; i < inputAudioSources.length; i++) {
@@ -463,6 +478,9 @@ public class StreamingGUI extends Application {
         settings.setOutputDirectory(inputOutputDirectory.getText());
         settings.setAudioBitrate(inputAudioBitrate.getValue());
         settings.setFps(inputFramePerSecond.getValue());
+        for (Map.Entry<String, ColorPicker> entry : languageColorPickers.entrySet()) {
+            settings.getLanguageColors().put(entry.getKey(), entry.getValue().getValue().toString());
+        }
         SettingsUtil.saveSettings(settings);
     }
 
@@ -631,7 +649,19 @@ public class StreamingGUI extends Application {
             }
         });
 
-        HBox buttonBox = new HBox(80, startButton, stopButton,clearOutputButton);
+        // Create the VU Meters button
+        Button showVUMetersButton = new Button("Level Meters");
+        showVUMetersButton.getStyleClass().add("event-button");
+        showVUMetersButton.getStyleClass().add("primary-button"); // Light blue style
+        showVUMetersButton.setOnAction(event -> {
+            if (vuMeterPanel.isShowing()) {
+                vuMeterPanel.toFront();
+            } else {
+                vuMeterPanel.show();
+            }
+        });
+
+        HBox buttonBox = new HBox(80, startButton, stopButton, clearOutputButton, showVUMetersButton);
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.setPadding(new Insets(20, 0, 20, 0));
         consoleBox.setPadding(new Insets(0,0,0,10));
@@ -689,31 +719,15 @@ public class StreamingGUI extends Application {
         tooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
         tooltip.getStyleClass().add("tooltip");
         Label videoInputLabel = new Label("Video Input:");
+        videoInputLabel.setPrefWidth(LABEL_PREF_WIDTH);
         // Create an HBox to hold both labels
-        HBox videoInputLabelHBox = new HBox(1);  // 5 is the spacing between the labels
-        videoInputLabelHBox.getChildren().addAll(videoInputLabel, videoInputinfoLabel);
-
-        inputGrid.add(videoInputLabelHBox, 0, row);
-        inputGrid.add(inputVideoSource, 1, row);
-        inputVideoSource.setPrefWidth(450);
-
-        Label audioChannelInfoLabel2 = new Label("?");
-        audioChannelInfoLabel2.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip2 = new Tooltip("If the input device manage only this language, choose 'Join'. Otherwise, choose 'Left' for the first language manage by the device, and 'Right' for the second language.\nWARNING: make sure the audio input support stereo if you choose left or right");
-        Tooltip.install(audioChannelInfoLabel2, tooltip2);
-        tooltip2.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip2.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip2.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip2.getStyleClass().add("tooltip");
-        Label audioChannelLabel = new Label("Audio Channel:");
-        // Create an HBox to hold both labels
-        HBox audioChannelLabelHBox = new HBox(1,audioChannelLabel,audioChannelInfoLabel2);  // 5 is the spacing between the labels
-        inputGrid.add(audioChannelLabelHBox, 2, row);
+        HBox videoInputLabelHBox = new HBox(1,videoInputLabel, videoInputinfoLabel);
+        videoInputLabelHBox.setAlignment(Pos.CENTER_LEFT);
 
         row++;
         //If it's empty, we select the first element
         if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
-        addLanguageRow(inputGrid, row, "Prayers (for mix):", inputAudioSources[0], inputAudioSourcesChannel[0],null);
+        addLanguageRow(inputGrid, row, "Prayers (for mix):", inputAudioSources[0], inputAudioSourcesChannel[0],null,null);
         Label EnMixDelayInfoLabel = new Label("?");
         EnMixDelayInfoLabel.getStyleClass().add("info-for-tooltip");
         Tooltip toolt = new Tooltip("The delay we put on the englih mix so it synchronise the english coming  the speakers throw the microphone to avoid echo");
@@ -727,7 +741,7 @@ public class StreamingGUI extends Application {
         HBox EnMixDelayLabelHBox = new HBox(1,EnMixDelayLabel,EnMixDelayInfoLabel);  // 5 is the spacing between the labels
         inputGrid.add(EnMixDelayLabelHBox, 3, row);
         row++;
-        addLanguageRow(inputGrid, row, "English (for mix):", inputAudioSources[1], inputAudioSourcesChannel[1],null);
+        addLanguageRow(inputGrid, row, "English Mix:", inputAudioSources[1], inputAudioSourcesChannel[1],null, languageNames[1]);
         inputGrid.add(inputenMixDelay, 3, row);
 
         row++;
@@ -749,25 +763,25 @@ public class StreamingGUI extends Application {
         HBox noiseReductionLabelHBox = new HBox(1,noiseReductionLabel,noiseReductionInfoLabel);  // 5 is the spacing between the labels
         inputGrid.add(noiseReductionLabelHBox, 3, row);
         row++;
-        addLanguageRow(inputGrid, row, "English:", inputAudioSources[2], inputAudioSourcesChannel[2],inputNoiseReductionValues[2]);
+        addLanguageRow(inputGrid, row, "English:", inputAudioSources[2], inputAudioSourcesChannel[2],inputNoiseReductionValues[2], languageNames[2]);
         row++;
-        addLanguageRow(inputGrid, row, "Spanish:", inputAudioSources[3], inputAudioSourcesChannel[3],inputNoiseReductionValues[3]);
+        addLanguageRow(inputGrid, row, "Spanish:", inputAudioSources[3], inputAudioSourcesChannel[3],inputNoiseReductionValues[3], languageNames[3]);
         row++;
-        addLanguageRow(inputGrid, row, "French:", inputAudioSources[4], inputAudioSourcesChannel[4],inputNoiseReductionValues[4]);
+        addLanguageRow(inputGrid, row, "French:", inputAudioSources[4], inputAudioSourcesChannel[4],inputNoiseReductionValues[4], languageNames[4]);
         row++;
-        addLanguageRow(inputGrid, row, "Portuguese:", inputAudioSources[5], inputAudioSourcesChannel[5],inputNoiseReductionValues[5]);
+        addLanguageRow(inputGrid, row, "Portuguese:", inputAudioSources[5], inputAudioSourcesChannel[5],inputNoiseReductionValues[5], languageNames[5]);
         row++;
-        addLanguageRow(inputGrid, row, "German:", inputAudioSources[6], inputAudioSourcesChannel[6],inputNoiseReductionValues[6]);
+        addLanguageRow(inputGrid, row, "German:", inputAudioSources[6], inputAudioSourcesChannel[6],inputNoiseReductionValues[6], languageNames[6]);
         row++;
-        addLanguageRow(inputGrid, row, "Cantonese:", inputAudioSources[7], inputAudioSourcesChannel[7],inputNoiseReductionValues[7]);
+        addLanguageRow(inputGrid, row, "Cantonese:", inputAudioSources[7], inputAudioSourcesChannel[7],inputNoiseReductionValues[7], languageNames[7]);
         row++;
-        addLanguageRow(inputGrid, row, "Mandarin:", inputAudioSources[8], inputAudioSourcesChannel[8],inputNoiseReductionValues[8]);
+        addLanguageRow(inputGrid, row, "Mandarin:", inputAudioSources[8], inputAudioSourcesChannel[8],inputNoiseReductionValues[8], languageNames[8]);
         row++;
-        addLanguageRow(inputGrid, row, "Vietnamese:", inputAudioSources[9], inputAudioSourcesChannel[9],inputNoiseReductionValues[9]);
+        addLanguageRow(inputGrid, row, "Vietnamese:", inputAudioSources[9], inputAudioSourcesChannel[9],inputNoiseReductionValues[9], languageNames[9]);
         row++;
-        addLanguageRow(inputGrid, row, "Italian:", inputAudioSources[10], inputAudioSourcesChannel[10],inputNoiseReductionValues[10]);
+        addLanguageRow(inputGrid, row, "Italian:", inputAudioSources[10], inputAudioSourcesChannel[10],inputNoiseReductionValues[10], languageNames[10]);
         row++;
-        addLanguageRow(inputGrid, row, "Greek:", inputAudioSources[11], inputAudioSourcesChannel[11],inputNoiseReductionValues[11]);
+        addLanguageRow(inputGrid, row, "Greek:", inputAudioSources[11], inputAudioSourcesChannel[11],inputNoiseReductionValues[11], languageNames[11]);
 
         int comboWith = 100;
         ColumnConstraints col1 = new ColumnConstraints();
@@ -1118,43 +1132,21 @@ public class StreamingGUI extends Application {
         HBox saveHBox = new HBox(saveButton);
         saveHBox.setAlignment(Pos.CENTER);
         saveHBox.setPadding(new Insets(20,0,20,0));
-        return new VBox(inputGrid,inputGrid2,saveHBox);
-    }
 
-    private void addLanguageRow(GridPane gridPane, int rowIndex, String labelText, ComboBox<String> audioInput, ComboBox<String> audioInputChannel,ComboBox<String> noiseReductionValue) {
-        Label audioInputinfoLabel = new Label("?");
-        audioInputinfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip = new Tooltip("Choose the input device for this language.It can happen you need to choose a device that manage two language, depending of the audio driver offers mono or only stereos.\n If you have to share an input device between languages, you'll have to use the Channel audio parameter which will allow to divide the stereo if needed");
-        Tooltip.install(audioInputinfoLabel, tooltip);
-        tooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip.getStyleClass().add("tooltip");
-        Label audioInputLabel = new Label(labelText);
-        // Create an HBox to hold both labels
-        HBox audioInputLabelHBox = new HBox(1,audioInputLabel,audioInputinfoLabel);
-        gridPane.add(audioInputLabelHBox, 0, rowIndex);
-        gridPane.add(audioInput, 1, rowIndex);
-
-        gridPane.add(audioInputChannel, 2, rowIndex);
-        if(noiseReductionValue!=null) {
-            gridPane.add(noiseReductionValue, 3, rowIndex);
-        }
-
-        audioInput.valueProperty().addListener((observable, oldValue, newValue) -> {
-            if (!newValue.equals("Not Used") && !newValue.isEmpty()) {
-                audioInputChannel.setDisable(false);
-               // audioInputChannel.setValue("Join");
-                if(noiseReductionValue!=null) {
-                    noiseReductionValue.setDisable(false);
-                }
+        Button showVUMetersButton = new Button("Show VU Meters");
+        showVUMetersButton.getStyleClass().add("event-button");
+        showVUMetersButton.setOnAction(event -> {
+            if (vuMeterPanel.isShowing()) {
+                vuMeterPanel.toFront();
             } else {
-                audioInputChannel.setDisable(true);
-                if(noiseReductionValue!=null) {
-                    noiseReductionValue.setDisable(true);
-                }
+                vuMeterPanel.show();
             }
         });
+        HBox vuMeterHBox = new HBox(showVUMetersButton);
+        vuMeterHBox.setAlignment(Pos.CENTER);
+        vuMeterHBox.setPadding(new Insets(0,0,20,0));
+
+        return new VBox(inputGrid,inputGrid2,saveHBox, vuMeterHBox);
     }
 
     @Override
@@ -1170,11 +1162,60 @@ public class StreamingGUI extends Application {
             handleClose();
         });
         primaryStage.show();
+        applySettings();
         applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),isTheOutputAFile.get());
+        vuMeterPanel = new LevelMeterPanel(inputAudioSources, inputAudioSourcesChannel, settings.getLanguageColors());
 
     }
 
+    private void addLanguageRow(GridPane gridPane, int rowIndex, String labelText, ComboBox<String> audioInput, ComboBox<String> audioInputChannel, ComboBox<String> noiseReductionValue, String languageKey) {
+
+        ColorPicker colorPicker = new ColorPicker();
+        colorPicker.getStyleClass().add("color-picker-no-arrow");
+        colorPicker.setPrefWidth(30);
+        colorPicker.setPrefHeight(25);
+        languageColorPickers.put(languageKey, colorPicker);
+        Label audioInputinfoLabel = new Label("?");
+        audioInputinfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltip = new Tooltip("Choose the input device for this language.It can happen you need to choose a device that manage two language, depending of the audio driver offers mono or only stereos.\n If you have to share an input device between languages, you'll have to use the Channel audio parameter which will allow to divide the stereo if needed");
+        Tooltip.install(audioInputinfoLabel, tooltip);
+        tooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
+        tooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
+        tooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip.getStyleClass().add("tooltip");
+        Label audioInputLabel = new Label(labelText);
+        // Create an HBox to hold both labels
+        HBox audioInputLabelHBox = new HBox(5, colorPicker, audioInputLabel, audioInputinfoLabel);
+        audioInputLabelHBox.setAlignment(Pos.CENTER_LEFT);
+        audioInputLabelHBox.setPrefWidth(LABEL_PREF_WIDTH + 50 + 10); // ColorPicker width + Label width + spacing
+        gridPane.add(audioInputLabelHBox, 0, rowIndex);
+        gridPane.add(audioInput, 1, rowIndex);
+
+        gridPane.add(audioInputChannel, 2, rowIndex);
+        if(noiseReductionValue!=null) {
+            gridPane.add(noiseReductionValue, 3, rowIndex);
+        }
+
+        audioInput.valueProperty().addListener((observable, oldValue, newValue) -> {
+            if (!newValue.equals("Not Used") && !newValue.isEmpty()) {
+                audioInputChannel.setDisable(false);
+                // audioInputChannel.setValue("Join");
+                if(noiseReductionValue!=null) {
+                    noiseReductionValue.setDisable(false);
+                }
+            } else {
+                audioInputChannel.setDisable(true);
+                if(noiseReductionValue!=null) {
+                    noiseReductionValue.setDisable(true);
+                }
+            }
+        });
+    }
+
     private void handleClose() {
+        if (vuMeterPanel != null) {
+            vuMeterPanel.closeVUMeters();
+        }
         stopEncodingThread();
     }
 

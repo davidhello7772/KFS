@@ -28,10 +28,10 @@
 .bg-livestreaming-and-record .tab-pane .tab-header-area .tab-header-background {
      -fx-background-color: #ffd4fb;
 }
+
 .bg-light-blue .tab-pane .tab:selected {
     -fx-background-color: -output-is-file-bg-color;
 }
-
 
 .bg-light-blue .tab-pane .tab {
     -fx-background-color: #DCF3F9;
@@ -40,19 +40,19 @@
 .bg-light-blue .tab-pane .tab-header-area .tab-header-background {
      -fx-background-color: #DCEBF9;
 }
+
 .bg-light-blue .tab-pane .tab:selected {
     -fx-background-color: -output-is-file-bg-color;
 }
 
-.event-button
-{
+.event-button {
     -fx-background-radius: 4;
     -fx-pref-height:35px;
     -fx-min-height:35px;
     -fx-max-height:35px;
     -fx-pref-width:150px;
     -fx-alignment: center;
- /*  -fx-font-family: "Google Sans", Roboto, Arial;*/
+    /* -fx-font-family: "Google Sans", Roboto, Arial; */
     -fx-font-weight: bolder;
 }
 
@@ -60,6 +60,7 @@
     -fx-background-color: -blue-color;
     -fx-text-fill: white;
 }
+
 .primary-button:hover {
     -fx-background-color: -blue-color-hover;
 }
@@ -68,6 +69,7 @@
     -fx-background-color: -red-color;
     -fx-text-fill: white;
 }
+
 .danger-button:hover {
     -fx-background-color: -red-color-hover;
 }
@@ -78,7 +80,7 @@
 }
 
 .success-button:hover {
-  -fx-background-color: -green-color-hover;
+    -fx-background-color: -green-color-hover;
 }
 
 .secondary-button {
@@ -90,7 +92,7 @@
     -fx-background-color: -grey-color-hover;
 }
 
-.primary-text, .primary-text SVGPath{
+.primary-text, .primary-text SVGPath {
     -fx-text-fill: -blue-color;
     -fx-fill: -blue-color;
 }
@@ -119,30 +121,27 @@
     -fx-font-weight: bolder;
 }
 
-.title
-{
-  -fx-font-size: 35px;
-}
-.subtitle
-{
-  -fx-font-size: 22px;
+.title {
+    -fx-font-size: 35px;
 }
 
-.title3
-{
-  -fx-font-size: 16px;
+.subtitle {
+    -fx-font-size: 22px;
 }
 
-.title4
-{
-  -fx-font-size: 14px;
+.title3 {
+    -fx-font-size: 16px;
+}
+
+.title4 {
+    -fx-font-size: 14px;
 }
 
 .confirmation-title {
-   -fx-font-size: 22px;
-   -fx-text-fill: -green-color;
-   -fx-fill: -green-color;
-   -fx-font-weight: bolder;
+    -fx-font-size: 22px;
+    -fx-text-fill: -green-color;
+    -fx-fill: -green-color;
+    -fx-font-weight: bolder;
 }
 
 .tooltip {
@@ -162,20 +161,17 @@
     -fx-padding: 2 5;
 }
 
-.small-text
-{
-  -fx-font-size: 9px;
+.small-text {
+    -fx-font-size: 9px;
 }
 
-.table-row-cell:selected .font-blue
-{
-
+.table-row-cell:selected .font-blue {
+    /* Keep empty for existing functionality */
 }
 
 .table-row-cell:selected {
-  -fx-background: #BBBBBB;
+    -fx-background: #BBBBBB;
 }
-
 
 .webfx-dates-picker-selected {
     -fx-background-color: #afe7ff;
@@ -190,6 +186,7 @@
 .webfx-dates-picker-date-passed {
     -fx-text-fill: #cccccc;
 }
+
 .webfx-dates-picker-arrow {
     -fx-fill: -blue-color;
     -fx-background-radius: 10px;
@@ -200,6 +197,269 @@
     -fx-font-size: 14px;
 }
 
+/* Hide the dropdown arrow on color picker */
+.color-picker-no-arrow .arrow-button {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-padding: 0;
+    -fx-max-width: 0;
+    -fx-pref-width: 0;
+    -fx-min-width: 0;
+}
 
+.color-picker-no-arrow .arrow-button .arrow {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-padding: 0;
+    -fx-shape: "";
+}
 
+/* Style the color picker label to center the color properly */
+.color-picker-no-arrow .color-picker-label {
+    -fx-border-width: 0;
+    -fx-border-color: transparent;
+    -fx-alignment: center;
+    -fx-content-display: center;
+}
 
+/* Make the color display area take full width and center properly */
+.color-picker-no-arrow .color-rect {
+    -fx-min-width: 26;
+    -fx-pref-width: 26;
+    -fx-max-width: 26;
+    -fx-min-height: 21;
+    -fx-pref-height: 21;
+    -fx-max-height: 21;
+}
+
+/* Ensure the color picker itself is properly aligned */
+.color-picker-no-arrow {
+    -fx-alignment: center;
+    -fx-content-display: center;
+}
+
+/* ========================================
+   LEVEL METER SPECIFIC STYLES
+======================================== */
+
+.level-meter-card {
+    -fx-background-radius: 16;
+    -fx-border-radius: 16;
+    -fx-border-width: 2;
+    -fx-border-color: rgba(255, 255, 255, 0.2);
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.2), 16, 0, 0, 8);
+    -fx-cursor: hand;
+}
+
+.level-meter-card:hover {
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 20, 0, 0, 12);
+    -fx-translate-y: -2;
+}
+
+.level-meter-title {
+    -fx-font-weight: bold;
+    -fx-font-size: 20px;
+    -fx-text-fill: white;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.4), 2, 0, 0, 2);
+}
+
+.level-meter-subtitle {
+    -fx-font-size: 14px;
+    -fx-text-fill: rgba(255, 255, 255, 0.8);
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 1, 0, 0, 1);
+}
+
+.level-meter-db-display {
+    -fx-font-weight: bold;
+    -fx-font-size: 28px;
+    -fx-text-fill: white;
+    -fx-background-color: rgba(0, 0, 0, 0.2);
+    -fx-background-radius: 25;
+    -fx-padding: 8 16;
+    -fx-border-color: rgba(255, 255, 255, 0.2);
+    -fx-border-width: 1;
+    -fx-border-radius: 25;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.4), 2, 0, 0, 2);
+}
+
+.level-meter-device-info {
+    -fx-font-size: 13px;
+    -fx-text-fill: rgba(255, 255, 255, 0.9);
+    -fx-background-color: rgba(0, 0, 0, 0.15);
+    -fx-background-radius: 12;
+    -fx-padding: 4 12;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 1, 0, 0, 1);
+}
+
+.level-meter-status-active {
+    -fx-fill: #27AE60;
+    -fx-stroke: rgba(255, 255, 255, 0.3);
+    -fx-stroke-width: 2;
+    -fx-effect: dropshadow(gaussian, #27AE60, 15, 0, 0, 0);
+}
+
+.level-meter-status-warning {
+    -fx-fill: #F39C12;
+    -fx-stroke: rgba(255, 255, 255, 0.3);
+    -fx-stroke-width: 2;
+    -fx-effect: dropshadow(gaussian, #F39C12, 15, 0, 0, 0);
+}
+
+.level-meter-status-critical {
+    -fx-fill: #E74C3C;
+    -fx-stroke: rgba(255, 255, 255, 0.3);
+    -fx-stroke-width: 2;
+    -fx-effect: dropshadow(gaussian, #E74C3C, 15, 0, 0, 0);
+}
+
+.level-meter-scale-label {
+    -fx-font-weight: bold;
+    -fx-font-size: 12px;
+    -fx-text-fill: white;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.5), 1, 0, 0, 1);
+}
+
+.level-meter-scale-mark {
+    -fx-fill: rgba(255, 255, 255, 0.8);
+    -fx-arc-width: 1;
+    -fx-arc-height: 1;
+}
+
+.level-meter-background {
+    -fx-fill: rgba(0, 0, 0, 0.3);
+    -fx-stroke: rgba(255, 255, 255, 0.2);
+    -fx-stroke-width: 1;
+    -fx-arc-width: 30;
+    -fx-arc-height: 30;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 8, 0, 0, 2);
+}
+
+.level-meter-bar {
+    -fx-arc-width: 30;
+    -fx-arc-height: 30;
+    -fx-effect: dropshadow(gaussian, rgba(255, 255, 255, 0.2), 20, 0, 0, 0);
+}
+
+.level-meter-bar-green {
+    -fx-fill: #32cd32;
+    -fx-arc-width: 30;
+    -fx-arc-height: 30;
+    -fx-effect: dropshadow(gaussian, rgba(50, 205, 50, 0.4), 15, 0, 0, 0);
+}
+
+.level-meter-bar-yellow {
+    -fx-fill: #ffff00;
+    -fx-arc-width: 30;
+    -fx-arc-height: 30;
+    -fx-effect: dropshadow(gaussian, rgba(255, 255, 0, 0.4), 15, 0, 0, 0);
+}
+
+.level-meter-bar-red {
+    -fx-fill: #ff0000;
+    -fx-arc-width: 30;
+    -fx-arc-height: 30;
+    -fx-effect: dropshadow(gaussian, rgba(255, 0, 0, 0.4), 15, 0, 0, 0);
+}
+
+.level-meter-peak-hold {
+    -fx-arc-width: 30;
+    -fx-arc-height: 30;
+    -fx-effect: dropshadow(gaussian, rgba(255, 100, 100, 0.6), 10, 0, 0, 0);
+}
+
+/* Animation classes for high activity levels */
+.level-meter-high-activity {
+    -fx-effect: dropshadow(gaussian, rgba(255, 255, 255, 0.4), 25, 0, 0, 15);
+}
+
+.level-meter-pulse-animation {
+    -fx-effect: dropshadow(gaussian, rgba(255, 255, 255, 0.6), 30, 0, 0, 0);
+}
+
+/* Status indicator animations */
+.level-meter-status-pulse {
+    -fx-effect: dropshadow(gaussian, rgba(39, 174, 96, 0.8), 20, 0, 0, 0);
+}
+
+/* Container styles for level meter groups */
+.level-meters-container {
+    -fx-spacing: 25;
+    -fx-padding: 20;
+    -fx-alignment: center;
+}
+
+.level-meters-grid {
+    -fx-hgap: 25;
+    -fx-vgap: 25;
+    -fx-padding: 20;
+    -fx-alignment: center;
+}
+
+/* Header styles for level meter dashboard */
+.level-meters-header {
+    -fx-alignment: center;
+    -fx-spacing: 10;
+    -fx-padding: 0 0 30 0;
+}
+
+.level-meters-main-title {
+    -fx-font-size: 40px;
+    -fx-font-weight: bold;
+    -fx-text-fill: white;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 3, 0, 0, 3);
+}
+
+.level-meters-subtitle {
+    -fx-font-size: 16px;
+    -fx-text-fill: rgba(255, 255, 255, 0.7);
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.3), 1, 0, 0, 1);
+}
+
+/* Responsive design for smaller screens */
+@media screen and (max-width: 768px) {
+    .level-meter-card {
+        -fx-pref-width: 250;
+        -fx-min-width: 250;
+    }
+
+    .level-meter-title {
+        -fx-font-size: 18px;
+    }
+
+    .level-meter-db-display {
+        -fx-font-size: 24px;
+    }
+
+    .level-meters-main-title {
+        -fx-font-size: 32px;
+    }
+
+    .level-meters-grid {
+        -fx-hgap: 20;
+        -fx-vgap: 20;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    .level-meter-card {
+        -fx-pref-width: 220;
+        -fx-min-width: 220;
+    }
+
+    .level-meter-title {
+        -fx-font-size: 16px;
+    }
+
+    .level-meter-db-display {
+        -fx-font-size: 20px;
+    }
+
+    .level-meters-main-title {
+        -fx-font-size: 28px;
+    }
+}
