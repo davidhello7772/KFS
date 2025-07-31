@@ -284,9 +284,9 @@ public class StreamRecorderRunnable implements Runnable {
         }
         if(!appContext.getInputAudioSources()[11].getValue().equals("Not Used")) {
             parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("title=\"Suomi\"");
+            parameterCommand.add("title=\"ελληνικά\"");
             parameterCommand.add("-metadata:s:a:" + languageCount);
-            parameterCommand.add("language=fin");
+            parameterCommand.add("language=grc");
             languageCount++;
         }
 

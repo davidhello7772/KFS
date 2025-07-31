@@ -767,7 +767,7 @@ public class StreamingGUI extends Application {
         row++;
         addLanguageRow(inputGrid, row, "Italian:", inputAudioSources[10], inputAudioSourcesChannel[10],inputNoiseReductionValues[10]);
         row++;
-        addLanguageRow(inputGrid, row, "Finnish:", inputAudioSources[11], inputAudioSourcesChannel[11],inputNoiseReductionValues[11]);
+        addLanguageRow(inputGrid, row, "Greek:", inputAudioSources[11], inputAudioSourcesChannel[11],inputNoiseReductionValues[11]);
 
         int comboWith = 100;
         ColumnConstraints col1 = new ColumnConstraints();
