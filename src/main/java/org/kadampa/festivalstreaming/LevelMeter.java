@@ -5,11 +5,10 @@ import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.effect.DropShadow;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Pane;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Rectangle;
@@ -60,6 +59,12 @@ public class LevelMeter {
 
     private long redPeakTimestamp = 0;
     private long yellowPeakTimestamp = 0;
+
+    private Button monitorButton;
+    private volatile boolean monitoringEnabled = false;
+    private SourceDataLine outputLine;
+    private final Object outputLineLock = new Object();
+    private volatile float monitorGain = 1.0f; // Fixed gain at 1.0 since no slider
 
     public LevelMeter(String language, Mixer.Info mixerInfo, String channel, Color backgroundColor) {
         this.mixerInfo = mixerInfo;
@@ -142,10 +147,59 @@ public class LevelMeter {
         updateStatusIndicator();
 
         titleRow.getChildren().addAll(languageLabel, statusIndicator);
-        titleBox.getChildren().addAll(titleRow,audioInterfaceLabel);
-        headerBox.getChildren().add(titleBox);
+        titleBox.getChildren().addAll(titleRow, audioInterfaceLabel);
+
+        headerBox.getChildren().addAll(titleBox);
 
         return headerBox;
+    }
+
+    private void updateMonitorButtonStyle() {
+        monitorButton.setFont(Font.font("System", FontWeight.BOLD, 10));
+
+        // Style based on monitoring state
+        if (monitoringEnabled) {
+            // Red background for active monitoring
+            monitorButton.setStyle(
+                "-fx-background-color: linear-gradient(to bottom, #ef4444, #dc2626);" +
+                    "-fx-background-radius: 8;" +
+                    "-fx-border-color: #fca5a5;" +
+                    "-fx-border-width: 1;" +
+                    "-fx-border-radius: 8;" +
+                    "-fx-text-fill: white;" +
+                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 4, 0, 0, 2);"
+            );
+        } else {
+            // Background-like color for inactive monitoring with strike-through effect
+            monitorButton.setStyle(
+                "-fx-background-color: rgba(0, 0, 0, 0.2);" +
+                    "-fx-background-radius: 8;" +
+                    "-fx-background-radius: 8;" +
+                    "-fx-border-color: rgba(255, 255, 255, 0.2);" +
+                    "-fx-border-width: 1;" +
+                    "-fx-border-radius: 8;" +
+                    "-fx-text-fill: white;" +
+                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 4, 0, 0, 2);"
+            );
+
+            // Add strike-through line for disabled state
+            if (!monitoringEnabled) {
+                // Create a line overlay effect by adding a Rectangle as background
+                // This is a workaround since JavaFX doesn't have built-in strike-through for buttons
+                monitorButton.setText("\uD83C\uDFA7"); // Unicode combining long stroke overlay
+            }
+        }
+
+        // Add hover effect
+        monitorButton.setOnMouseEntered(e -> {
+            if (monitoringEnabled) {
+                monitorButton.setStyle(monitorButton.getStyle().replace("0.3", "0.4"));
+            } else {
+                monitorButton.setStyle(monitorButton.getStyle().replace("rgba(0, 0, 0, 0.2)", "rgba(0, 0, 0, 0.4)"));
+            }
+        });
+
+        monitorButton.setOnMouseExited(e -> updateMonitorButtonStyle());
     }
 
     private VBox createInfoSection() {
@@ -168,9 +222,65 @@ public class LevelMeter {
             "-fx-border-radius: 25;");
         addTextShadow(dbLabel);
 
-        infoBox.getChildren().addAll(dbLabel);
+        // Monitor toggle button - integrated design with headphones icon style
+        monitorButton = new Button();
+        monitorButton.setPrefSize(35, 35);
+        updateMonitorButtonStyle();
+        monitorButton.setOnAction(e -> toggleMonitoring());
+
+        HBox bottomRow = new HBox();
+        bottomRow.setAlignment(Pos.CENTER);
+        bottomRow.setSpacing(10);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        bottomRow.getChildren().addAll(dbLabel, spacer,monitorButton);
+
+        infoBox.getChildren().addAll(bottomRow);
 
         return infoBox;
+    }
+
+    private void toggleMonitoring() {
+        monitoringEnabled = !monitoringEnabled;
+        updateMonitorButtonStyle();
+
+        synchronized (outputLineLock) {
+            if (monitoringEnabled && outputLine == null) {
+                try {
+                    AudioFormat format = new AudioFormat(48000, 16, 2, true, false);
+                    outputLine = AudioSystem.getSourceDataLine(format);
+                    outputLine.open(format);
+                    outputLine.start();
+                } catch (LineUnavailableException e) {
+                    outputLine = null;
+                    Platform.runLater(() -> dbLabel.setText("Monitor Error"));
+                    monitoringEnabled = false;
+                    updateMonitorButtonStyle();
+                }
+            } else if (!monitoringEnabled && outputLine != null) {
+                outputLine.stop();
+                outputLine.close();
+                outputLine = null;
+            }
+        }
+    }
+
+    private byte[] applyGain(byte[] buffer, int bytesRead, float gain) {
+        if (gain == 1.0f) {
+            return buffer; // No change needed
+        }
+
+        byte[] processedBuffer = new byte[bytesRead];
+        for (int i = 0; i < bytesRead; i += 2) { // Assuming 16-bit samples (2 bytes per sample)
+            // Reconstruct sample (little-endian)
+            short sample = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
+            // Apply gain
+            sample = (short) (sample * gain);
+            // Write back to buffer (little-endian)
+            processedBuffer[i] = (byte) (sample & 0xFF);
+            processedBuffer[i + 1] = (byte) (sample >> 8);
+        }
+        return processedBuffer;
     }
 
     private void updateStatusIndicator() {
@@ -508,7 +618,7 @@ public class LevelMeter {
 
         audioCaptureThread = new Thread(() -> {
             try {
-                AudioFormat format = new AudioFormat(44100, 16, 2, true, true);
+                AudioFormat format = new AudioFormat(48000, 16, 2, true, false);
                 line = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(new DataLine.Info(TargetDataLine.class, format));
 
                 // Smaller buffer for less latency and processing
@@ -524,6 +634,16 @@ public class LevelMeter {
                     int bytesRead = line.read(buffer, 0, buffer.length);
                     if (bytesRead > 0) {
                         currentDb = calculateLevel(buffer, bytesRead);
+
+                        if (monitoringEnabled && outputLine != null) {
+                            synchronized (outputLineLock) {
+                                if (outputLine != null && outputLine.isOpen()) {
+                                    // Apply gain before writing to output
+                                    byte[] processedBuffer = applyGain(buffer, bytesRead, monitorGain);
+                                    outputLine.write(processedBuffer, 0, processedBuffer.length);
+                                }
+                            }
+                        }
                     }
 
                     // Add small delay to reduce CPU usage
@@ -552,6 +672,13 @@ public class LevelMeter {
         if (audioCaptureThread != null) {
             audioCaptureThread.interrupt();
         }
+        synchronized (outputLineLock) {
+            if (outputLine != null) {
+                outputLine.stop();
+                outputLine.close();
+                outputLine = null;
+            }
+        }
     }
 
     private double calculateLevel(byte[] buffer, int bytesRead) {
@@ -560,10 +687,10 @@ public class LevelMeter {
         int step = 16; // Process every 4th stereo frame (4 frames * 4 bytes = 16 bytes)
 
         for (int i = 0; i < bytesRead - 3; i += step) {
-            // Left channel (big-endian)
-            short leftSample = (short) ((buffer[i] << 8) | (buffer[i + 1] & 0xFF));
-            // Right channel (big-endian)
-            short rightSample = (short) ((buffer[i + 2] << 8) | (buffer[i + 3] & 0xFF));
+            // Left channel (little-endian)
+            short leftSample = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xFF));
+            // Right channel (little-endian)
+            short rightSample = (short) ((buffer[i + 3] << 8) | (buffer[i + 2] & 0xFF));
 
             double leftAbs = Math.abs(leftSample / MAX_SAMPLE_VALUE);
             double rightAbs = Math.abs(rightSample / MAX_SAMPLE_VALUE);
