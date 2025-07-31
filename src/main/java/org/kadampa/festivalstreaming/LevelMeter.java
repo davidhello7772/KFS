@@ -27,10 +27,10 @@ public class LevelMeter {
     private  Circle statusIndicator;
     private DropShadow statusGlow;
     private Mixer.Info mixerInfo;
-    private Thread audioCaptureThread;
     private volatile boolean running = false;
-    private TargetDataLine line;
     private String channel;
+    private AudioCaptureManager.AudioDataListener audioDataListener;
+
 
     private Rectangle greenBar, yellowBar, redBar, peakHoldBar;
     private Rectangle greenBackground, yellowBackground, redBackground;
@@ -43,7 +43,6 @@ public class LevelMeter {
     private static final double RED_THRESHOLD_DB = 6.0;      // (−6 dBFS + 12)
     private static final double METER_HEIGHT = 300;
     private static final double METER_WIDTH = 30;
-    private static final double MAX_SAMPLE_VALUE = 32768.0;
 
     private volatile double currentDb = MIN_DB;
     private volatile double actualCurrentDb = MIN_DB;
@@ -62,9 +61,6 @@ public class LevelMeter {
 
     private Button monitorButton;
     private volatile boolean monitoringEnabled = false;
-    private SourceDataLine outputLine;
-    private final Object outputLineLock = new Object();
-    private volatile float monitorGain = 1.0f; // Fixed gain at 1.0 since no slider
 
     public LevelMeter(String language, Mixer.Info mixerInfo, String channel, Color backgroundColor) {
         this.mixerInfo = mixerInfo;
@@ -244,43 +240,11 @@ public class LevelMeter {
         monitoringEnabled = !monitoringEnabled;
         updateMonitorButtonStyle();
 
-        synchronized (outputLineLock) {
-            if (monitoringEnabled && outputLine == null) {
-                try {
-                    AudioFormat format = new AudioFormat(48000, 16, 2, true, false);
-                    outputLine = AudioSystem.getSourceDataLine(format);
-                    outputLine.open(format);
-                    outputLine.start();
-                } catch (LineUnavailableException e) {
-                    outputLine = null;
-                    Platform.runLater(() -> dbLabel.setText("Monitor Error"));
-                    monitoringEnabled = false;
-                    updateMonitorButtonStyle();
-                }
-            } else if (!monitoringEnabled && outputLine != null) {
-                outputLine.stop();
-                outputLine.close();
-                outputLine = null;
-            }
+        if (monitoringEnabled) {
+            AudioCaptureManager.getInstance().startMonitoring(mixerInfo);
+        } else {
+            AudioCaptureManager.getInstance().stopMonitoring(mixerInfo);
         }
-    }
-
-    private byte[] applyGain(byte[] buffer, int bytesRead, float gain) {
-        if (gain == 1.0f) {
-            return buffer; // No change needed
-        }
-
-        byte[] processedBuffer = new byte[bytesRead];
-        for (int i = 0; i < bytesRead; i += 2) { // Assuming 16-bit samples (2 bytes per sample)
-            // Reconstruct sample (little-endian)
-            short sample = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
-            // Apply gain
-            sample = (short) (sample * gain);
-            // Write back to buffer (little-endian)
-            processedBuffer[i] = (byte) (sample & 0xFF);
-            processedBuffer[i + 1] = (byte) (sample >> 8);
-        }
-        return processedBuffer;
     }
 
     private void updateStatusIndicator() {
@@ -611,96 +575,103 @@ public class LevelMeter {
         updateAudioInterfaceLabel();
     }
 
+    public void stopMonitoring() {
+        if (monitoringEnabled) {
+            toggleMonitoring();
+        }
+    }
+
     void start() {
         if (mixerInfo == null) return;
         running = true;
         animationTimer.start();
 
-        audioCaptureThread = new Thread(() -> {
-            try {
-                AudioFormat format = new AudioFormat(48000, 16, 2, true, false);
-                line = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(new DataLine.Info(TargetDataLine.class, format));
-
-                // Smaller buffer for less latency and processing
-                int bufferSize = 2048; // Reduced from line.getBufferSize() / 5
-                line.open(format, bufferSize);
-                line.start();
-
-                int frameSize = format.getFrameSize();
-                bufferSize -= bufferSize % frameSize;
-                byte[] buffer = new byte[bufferSize];
-
-                while (running) {
-                    int bytesRead = line.read(buffer, 0, buffer.length);
-                    if (bytesRead > 0) {
-                        currentDb = calculateLevel(buffer, bytesRead);
-
-                        if (monitoringEnabled && outputLine != null) {
-                            synchronized (outputLineLock) {
-                                if (outputLine != null && outputLine.isOpen()) {
-                                    // Apply gain before writing to output
-                                    byte[] processedBuffer = applyGain(buffer, bytesRead, monitorGain);
-                                    outputLine.write(processedBuffer, 0, processedBuffer.length);
-                                }
-                            }
-                        }
-                    }
-
-                    // Add small delay to reduce CPU usage
-                    try {
-                        Thread.sleep(10); // 10ms delay = ~100 updates per second max
-                    } catch (InterruptedException e) {
-                        break;
-                    }
-                }
-            } catch (LineUnavailableException e) {
-                Platform.runLater(() -> dbLabel.setText("Error"));
-            } finally {
-                if (line != null) {
-                    line.stop();
-                    line.close();
-                }
+        // Create the audio data listener
+        audioDataListener = (buffer, bytesRead, format) -> {
+            if (running) {
+                currentDb = calculateLevelImproved(buffer, bytesRead, format);
             }
-        });
-        audioCaptureThread.setDaemon(true);
-        audioCaptureThread.start();
+        };
+
+        // Register with the improved capture manager
+        AudioCaptureManager.getInstance().registerListener(mixerInfo, audioDataListener);
     }
 
     public void stop() {
         running = false;
         animationTimer.stop();
-        if (audioCaptureThread != null) {
-            audioCaptureThread.interrupt();
-        }
-        synchronized (outputLineLock) {
-            if (outputLine != null) {
-                outputLine.stop();
-                outputLine.close();
-                outputLine = null;
-            }
+
+        // Unregister from the capture manager
+        if (audioDataListener != null && mixerInfo != null) {
+            AudioCaptureManager.getInstance().unregisterListener(mixerInfo, audioDataListener);
+            audioDataListener = null;
         }
     }
 
-    private double calculateLevel(byte[] buffer, int bytesRead) {
+    private double calculateLevelImproved(byte[] buffer, int bytesRead, AudioFormat format) {
         double maxSample = 0.0;
-        // Process every 4th frame instead of every frame for better performance
-        int step = 16; // Process every 4th stereo frame (4 frames * 4 bytes = 16 bytes)
+        int channels = format.getChannels();
+        int sampleSizeInBits = format.getSampleSizeInBits();
+        int frameSize = format.getFrameSize();
 
-        for (int i = 0; i < bytesRead - 3; i += step) {
-            // Left channel (little-endian)
-            short leftSample = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xFF));
-            // Right channel (little-endian)
-            short rightSample = (short) ((buffer[i + 3] << 8) | (buffer[i + 2] & 0xFF));
+        // Process every 4th frame for performance, but ensure we don't skip too much data
+        int step = Math.max(frameSize, frameSize * 2);
 
-            double leftAbs = Math.abs(leftSample / MAX_SAMPLE_VALUE);
-            double rightAbs = Math.abs(rightSample / MAX_SAMPLE_VALUE);
+        for (int i = 0; i < bytesRead - frameSize + 1; i += step) {
+            if (sampleSizeInBits == 16) {
+                // 16-bit samples
+                if (channels == 1) {
+                    // Mono - treat as both left and right
+                    short sample = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xFF));
+                    double abs = Math.abs(sample / 32768.0);
+                    maxSample = Math.max(maxSample, abs);
+                } else if (channels == 2) {
+                    // Stereo
+                    short leftSample = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xFF));
+                    short rightSample = (short) ((buffer[i + 3] << 8) | (buffer[i + 2] & 0xFF));
 
-            if ("Left".equalsIgnoreCase(channel)) {
-                maxSample = Math.max(maxSample, leftAbs);
-            } else if ("Right".equalsIgnoreCase(channel)) {
-                maxSample = Math.max(maxSample, rightAbs);
-            } else { // "Join" or default
-                maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
+                    double leftAbs = Math.abs(leftSample / 32768.0);
+                    double rightAbs = Math.abs(rightSample / 32768.0);
+
+                    if ("Left".equalsIgnoreCase(channel)) {
+                        maxSample = Math.max(maxSample, leftAbs);
+                    } else if ("Right".equalsIgnoreCase(channel)) {
+                        maxSample = Math.max(maxSample, rightAbs);
+                    } else { // "Join" or default
+                        maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
+                    }
+                }
+            } else if (sampleSizeInBits == 24) {
+                // 24-bit samples (3 bytes per sample)
+                if (channels == 1) {
+                    // Mono 24-bit
+                    int sample = ((buffer[i + 2] << 16) | ((buffer[i + 1] & 0xFF) << 8) | (buffer[i] & 0xFF));
+                    // Sign extend 24-bit to 32-bit
+                    if ((sample & 0x800000) != 0) {
+                        sample |= 0xFF000000;
+                    }
+                    double abs = Math.abs(sample / 8388608.0); // 2^23
+                    maxSample = Math.max(maxSample, abs);
+                } else if (channels == 2) {
+                    // Stereo 24-bit
+                    int leftSample = ((buffer[i + 2] << 16) | ((buffer[i + 1] & 0xFF) << 8) | (buffer[i] & 0xFF));
+                    int rightSample = ((buffer[i + 5] << 16) | ((buffer[i + 4] & 0xFF) << 8) | (buffer[i + 3] & 0xFF));
+
+                    // Sign extend 24-bit to 32-bit
+                    if ((leftSample & 0x800000) != 0) leftSample |= 0xFF000000;
+                    if ((rightSample & 0x800000) != 0) rightSample |= 0xFF000000;
+
+                    double leftAbs = Math.abs(leftSample / 8388608.0);
+                    double rightAbs = Math.abs(rightSample / 8388608.0);
+
+                    if ("Left".equalsIgnoreCase(channel)) {
+                        maxSample = Math.max(maxSample, leftAbs);
+                    } else if ("Right".equalsIgnoreCase(channel)) {
+                        maxSample = Math.max(maxSample, rightAbs);
+                    } else { // "Join" or default
+                        maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
+                    }
+                }
             }
         }
 

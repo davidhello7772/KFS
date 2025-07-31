@@ -69,6 +69,9 @@ public class LevelMeterPanel extends Stage {
                 currentVuMeter.setChannel(newValue);
             });
         }
+
+        // Add a handler to stop monitoring when the panel is closed
+        this.setOnCloseRequest(event -> stopAllMonitoring());
     }
 
     private Mixer.Info getMixerInfo(String mixerName) {
@@ -88,5 +91,11 @@ public class LevelMeterPanel extends Stage {
             vuMeter.stop();
         }
         this.close();
+    }
+
+    public void stopAllMonitoring() {
+        for (LevelMeter vuMeter : vuMeters.values()) {
+            vuMeter.stopMonitoring();
+        }
     }
 }
