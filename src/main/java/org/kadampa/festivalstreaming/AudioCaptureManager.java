@@ -17,10 +17,10 @@ public class AudioCaptureManager {
         return INSTANCE;
     }
 
-    public void startMonitoring(Mixer.Info mixerInfo) {
+    public void startMonitoring(Mixer.Info mixerInfo, String channel) {
         DeviceCapture capture = deviceCaptures.get(mixerInfo);
         if (capture != null) {
-            capture.startMonitoring();
+            capture.startMonitoring(channel);
         }
     }
 
@@ -43,6 +43,7 @@ public class AudioCaptureManager {
         private SourceDataLine outputLine;
         private volatile boolean running = false;
         private volatile boolean monitoring = false;
+        private String channel;
         private AudioFormat captureFormat;
         private AudioFormat playbackFormat;
 
@@ -64,7 +65,8 @@ public class AudioCaptureManager {
             }
         }
 
-        void startMonitoring() {
+        void startMonitoring(String channel) {
+            this.channel = channel;
             monitoring = true;
         }
 
@@ -140,7 +142,27 @@ public class AudioCaptureManager {
                     }
                 }
 
-                long monoSample = (inputChannels == 2) ? (leftSample + rightSample) / 2 : leftSample;
+                long monoSample;
+                if (inputChannels == 2) {
+                    // Default to stereo if channel is not specified
+                    if (channel == null) {
+                        channel = "Stereo";
+                    }
+                    switch (channel) {
+                        case "Left":
+                            monoSample = leftSample;
+                            break;
+                        case "Right":
+                            monoSample = rightSample;
+                            break;
+                        case "Stereo":
+                        default:
+                            monoSample = (leftSample + rightSample) / 2;
+                            break;
+                    }
+                } else {
+                    monoSample = leftSample;
+                }
 
                 if (outputBitDepth == 16) {
                     short finalSample;

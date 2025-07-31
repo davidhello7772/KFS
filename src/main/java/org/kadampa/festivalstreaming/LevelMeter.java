@@ -106,7 +106,7 @@ public class LevelMeter {
             updateBackgroundStyle(newVal ? originalBackgroundColor.brighter() : originalBackgroundColor);
             updateMonitorButtonStyle();
             if (newVal) {
-                AudioCaptureManager.getInstance().startMonitoring(mixerInfo);
+                AudioCaptureManager.getInstance().startMonitoring(mixerInfo, channel);
             } else {
                 AudioCaptureManager.getInstance().stopMonitoring(mixerInfo);
             }
