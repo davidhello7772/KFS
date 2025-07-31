@@ -15,6 +15,7 @@ import javafx.scene.shape.Circle;
 import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.scene.text.TextAlignment;
 import javafx.util.Duration;
 
 import javax.sound.sampled.*;
@@ -22,12 +23,10 @@ import javax.sound.sampled.*;
 public class LevelMeter {
 
     private final VBox view;
-    private  Label languageLabel;
-    private  Label channelTypeLabel;
     private  Label dbLabel;
     private  Label audioInterfaceLabel;
-    private  Label stereoLabel;
     private  Circle statusIndicator;
+    private DropShadow statusGlow;
     private Mixer.Info mixerInfo;
     private Thread audioCaptureThread;
     private volatile boolean running = false;
@@ -45,6 +44,7 @@ public class LevelMeter {
     private static final double RED_THRESHOLD_DB = 6.0;      // (−6 dBFS + 12)
     private static final double METER_HEIGHT = 300;
     private static final double METER_WIDTH = 60;
+    private static final double MAX_SAMPLE_VALUE = 32768.0;
 
     private volatile double currentDb = MIN_DB;
     private volatile double actualCurrentDb = MIN_DB;
@@ -78,10 +78,10 @@ public class LevelMeter {
         VBox infoBox = createInfoSection();
 
         view.setSpacing(0);
-        view.setPadding(new Insets(24));
+        view.setPadding(new Insets(16));
         view.setAlignment(Pos.CENTER);
         view.setPrefWidth(280);
-        view.setMinHeight(METER_HEIGHT + 200);
+        view.setMinHeight(METER_HEIGHT + 120);
         view.getChildren().addAll(headerBox, meterContainer, infoBox);
 
         // Apply modern styling with gradient background
@@ -116,29 +116,34 @@ public class LevelMeter {
 
         VBox titleBox = new VBox();
         titleBox.setAlignment(Pos.CENTER);
+        titleBox.setSpacing(2);
 
-        languageLabel = new Label(language.toUpperCase());
+        Label languageLabel = new Label(language.toUpperCase());
         languageLabel.setFont(Font.font("System", FontWeight.BOLD, 20));
         languageLabel.setTextFill(Color.WHITE);
         languageLabel.setAlignment(Pos.CENTER);
         addTextShadow(languageLabel);
 
-        stereoLabel = new Label();
+        audioInterfaceLabel = new Label();
+        audioInterfaceLabel.setFont(Font.font("System", FontWeight.NORMAL, 13));
+        audioInterfaceLabel.setTextFill(Color.rgb(255, 255, 255, 0.9));
+        audioInterfaceLabel.setWrapText(true);
+        audioInterfaceLabel.setAlignment(Pos.CENTER);
+        audioInterfaceLabel.setTextAlignment(TextAlignment.CENTER);
+        audioInterfaceLabel.setPrefWidth(200);
+        audioInterfaceLabel.setMinHeight(32); // Reserve space for 2 lines
+        addTextShadow(audioInterfaceLabel);
 
-        // Determine channel type based on language
-        String channelType = determineChannelType(language);
-        channelTypeLabel = new Label(channelType);
-        channelTypeLabel.setFont(Font.font("System", FontWeight.NORMAL, 14));
-        channelTypeLabel.setTextFill(Color.rgb(255, 255, 255, 0.8));
-        addTextShadow(channelTypeLabel);
-
-        titleBox.getChildren().addAll(languageLabel, channelTypeLabel);
+        updateAudioInterfaceLabel();
 
         statusIndicator = new Circle(7);
+        statusGlow = new DropShadow(); // Initialize statusGlow here
+        statusIndicator.setEffect(statusGlow); // Set effect here
         updateStatusIndicator();
 
-        titleRow.getChildren().addAll(titleBox, statusIndicator);
-        headerBox.getChildren().add(titleRow);
+        titleRow.getChildren().addAll(languageLabel, statusIndicator);
+        titleBox.getChildren().addAll(titleRow,audioInterfaceLabel);
+        headerBox.getChildren().add(titleBox);
 
         return headerBox;
     }
@@ -146,65 +151,26 @@ public class LevelMeter {
     private VBox createInfoSection() {
         VBox infoBox = new VBox();
         infoBox.setAlignment(Pos.CENTER);
-        infoBox.setSpacing(16);
+        infoBox.setSpacing(12);
         infoBox.setPadding(new Insets(20, 0, 0, 0));
 
         // dB level display with modern styling
         dbLabel = new Label(String.format("%.1f dB", MIN_DB));
-        dbLabel.setFont(Font.font("System", FontWeight.BOLD, 28));
+        dbLabel.setFont(Font.font("System", FontWeight.BOLD, 15));
         dbLabel.setTextFill(Color.WHITE);
         dbLabel.setAlignment(Pos.CENTER);
+        dbLabel.setMinWidth(150);
         dbLabel.setStyle("-fx-background-color: rgba(0, 0, 0, 0.2); " +
             "-fx-background-radius: 25; " +
-            "-fx-padding: 8 16; " +
+            "-fx-padding: 8 40; " +
             "-fx-border-color: rgba(255, 255, 255, 0.2); " +
             "-fx-border-width: 1; " +
             "-fx-border-radius: 25;");
         addTextShadow(dbLabel);
 
-        // Device info section
-        VBox deviceBox = new VBox();
-        deviceBox.setAlignment(Pos.CENTER);
-        deviceBox.setSpacing(10);
-        deviceBox.setStyle("-fx-border-color: rgba(255, 255, 255, 0.2); " +
-            "-fx-border-width: 1 0 0 0; " +
-            "-fx-padding: 16 0 0 0;");
-
-        audioInterfaceLabel = new Label();
-        updateAudioInterfaceLabel();
-        audioInterfaceLabel.setFont(Font.font("System", FontWeight.NORMAL, 13));
-        audioInterfaceLabel.setTextFill(Color.rgb(255, 255, 255, 0.9));
-        audioInterfaceLabel.setWrapText(true);
-        audioInterfaceLabel.setAlignment(Pos.CENTER);
-        audioInterfaceLabel.setStyle("-fx-background-color: rgba(0, 0, 0, 0.15); " +
-            "-fx-background-radius: 12; " +
-            "-fx-padding: 4 12; " +
-            "-fx-border-color: rgba(255, 255, 255, 0.1); " +
-            "-fx-border-width: 1; " +
-            "-fx-border-radius: 12;");
-        addTextShadow(audioInterfaceLabel);
-
-        stereoLabel = new Label("Stereo");
-        stereoLabel.setFont(Font.font("System", FontWeight.NORMAL, 13));
-        stereoLabel.setTextFill(Color.rgb(255, 255, 255, 0.9));
-        addTextShadow(stereoLabel);
-
-        deviceBox.getChildren().addAll(audioInterfaceLabel, stereoLabel);
-        infoBox.getChildren().addAll(dbLabel, deviceBox);
+        infoBox.getChildren().addAll(dbLabel);
 
         return infoBox;
-    }
-
-    private String determineChannelType(String language) {
-        if (language.toLowerCase().contains("prayers")) {
-            return "Mix Channel";
-        } else if (language.toLowerCase().contains("english") && language.toLowerCase().contains("mix")) {
-            return "Mix Channel";
-        } else if (language.toLowerCase().contains("english")) {
-            return "Direct Channel";
-        } else {
-            return "Language Channel";
-        }
     }
 
     private void updateStatusIndicator() {
@@ -213,10 +179,8 @@ public class LevelMeter {
         statusIndicator.setStroke(Color.rgb(255, 255, 255, 0.3));
         statusIndicator.setStrokeWidth(2);
 
-        DropShadow glow = new DropShadow();
-        glow.setRadius(10);
-        glow.setColor(Color.rgb(39, 174, 96, 0.8));
-        statusIndicator.setEffect(glow);
+        statusGlow.setRadius(10);
+        statusGlow.setColor(Color.rgb(39, 174, 96, 0.8));
     }
 
     private void addTextShadow(Label label) {
@@ -343,8 +307,14 @@ public class LevelMeter {
 
         animationTimer = new AnimationTimer() {
             private long lastUpdate = 0;
+            private final long updateIntervalNs = 1_000_000_000 / 10; // 10 FPS
+
             @Override
             public void handle(long now) {
+                if (lastUpdate != 0 && now - lastUpdate < updateIntervalNs) {
+                    return;
+                }
+
                 if (lastUpdate == 0) {
                     lastUpdate = now;
                     return;
@@ -423,10 +393,9 @@ public class LevelMeter {
         }
 
         statusIndicator.setFill(statusColor);
-        DropShadow glow = new DropShadow();
-        glow.setRadius(15);
-        glow.setColor(glowColor);
-        statusIndicator.setEffect(glow);
+        statusGlow.setRadius(15);
+        statusGlow.setColor(glowColor);
+        statusIndicator.setEffect(statusGlow);
     }
 
     // Keep the existing drawMeter, calculateContrastColor and other methods unchanged
@@ -501,23 +470,6 @@ public class LevelMeter {
         dbLabel.setText(String.format("%.1f dB", actualDisplayDb));
     }
 
-    private Color calculateContrastColor(Color backgroundColor) {
-        // Calculate luminance using the W3C recommended formula for sRGB
-        // Convert RGB to sRGB (linearized)
-        double r = backgroundColor.getRed();
-        double g = backgroundColor.getGreen();
-        double b = backgroundColor.getBlue();
-
-        r = (r <= 0.03928) ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
-        g = (g <= 0.03928) ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
-        b = (b <= 0.03928) ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
-
-        double luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b);
-
-        // Use a threshold to decide between black and white
-        // A common threshold is 0.179 for text on background
-        return luminance > 0.179 ? Color.BLACK : Color.WHITE;
-    }
 
     public VBox getView() {
         return view;
@@ -525,18 +477,17 @@ public class LevelMeter {
 
     private void updateAudioInterfaceLabel() {
         String text = mixerInfo != null ? mixerInfo.getName() : "Not Selected";
-        audioInterfaceLabel.setText(text);
-
-        // Update stereo label based on channel
-        if (channel != null && !channel.isEmpty()) {
-            if ("Join".equalsIgnoreCase(channel)) {
-                stereoLabel.setText("Stereo");
-            } else {
-                stereoLabel.setText(channel);
-            }
-        } else {
-            stereoLabel.setText("Stereo");
+        String channelDisplay = channel;
+        if (channelDisplay == null || channelDisplay.isEmpty()) {
+            channelDisplay = "Join";
         }
+
+        if ("Join".equalsIgnoreCase(channelDisplay)) {
+            text += " - Stereo";
+        } else {
+            text += " - loffdsn ggodd fdjdfjf coivsmsq dsqkqks dskd" + channelDisplay;
+        }
+        audioInterfaceLabel.setText(text);
     }
 
     public void setMixerInfo(Mixer.Info mixerInfo) {
@@ -564,11 +515,13 @@ public class LevelMeter {
             try {
                 AudioFormat format = new AudioFormat(44100, 16, 2, true, true);
                 line = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(new DataLine.Info(TargetDataLine.class, format));
-                line.open(format, 4096);
+
+                // Smaller buffer for less latency and processing
+                int bufferSize = 2048; // Reduced from line.getBufferSize() / 5
+                line.open(format, bufferSize);
                 line.start();
 
                 int frameSize = format.getFrameSize();
-                int bufferSize = line.getBufferSize() / 5;
                 bufferSize -= bufferSize % frameSize;
                 byte[] buffer = new byte[bufferSize];
 
@@ -576,6 +529,13 @@ public class LevelMeter {
                     int bytesRead = line.read(buffer, 0, buffer.length);
                     if (bytesRead > 0) {
                         currentDb = calculateLevel(buffer, bytesRead);
+                    }
+
+                    // Add small delay to reduce CPU usage
+                    try {
+                        Thread.sleep(10); // 10ms delay = ~100 updates per second max
+                    } catch (InterruptedException e) {
+                        break;
                     }
                 }
             } catch (LineUnavailableException e) {
@@ -601,48 +561,40 @@ public class LevelMeter {
 
     private double calculateLevel(byte[] buffer, int bytesRead) {
         double maxSample = 0.0;
-        // The frame size is 4 bytes for 16-bit stereo (2 bytes left, 2 bytes right)
-        for (int i = 0; i < bytesRead - 3; i += 4) {
+        // Process every 4th frame instead of every frame for better performance
+        int step = 16; // Process every 4th stereo frame (4 frames * 4 bytes = 16 bytes)
+
+        for (int i = 0; i < bytesRead - 3; i += step) {
             // Left channel (big-endian)
             short leftSample = (short) ((buffer[i] << 8) | (buffer[i + 1] & 0xFF));
             // Right channel (big-endian)
             short rightSample = (short) ((buffer[i + 2] << 8) | (buffer[i + 3] & 0xFF));
 
-            double leftNormalized = leftSample / 32768.0;
-            double rightNormalized = rightSample / 32768.0;
+            double leftAbs = Math.abs(leftSample / MAX_SAMPLE_VALUE);
+            double rightAbs = Math.abs(rightSample / MAX_SAMPLE_VALUE);
 
             if ("Left".equalsIgnoreCase(channel)) {
-                if (Math.abs(leftNormalized) > maxSample) {
-                    maxSample = Math.abs(leftNormalized);
-                }
+                maxSample = Math.max(maxSample, leftAbs);
             } else if ("Right".equalsIgnoreCase(channel)) {
-                if (Math.abs(rightNormalized) > maxSample) {
-                    maxSample = Math.abs(rightNormalized);
-                }
+                maxSample = Math.max(maxSample, rightAbs);
             } else { // "Join" or default
-                double maxChannelSample = Math.max(Math.abs(leftNormalized), Math.abs(rightNormalized));
-                if (maxChannelSample > maxSample) {
-                    maxSample = maxChannelSample;
-                }
+                maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
             }
         }
 
         if (maxSample == 0.0) {
-            actualCurrentDb = -80.0; // Store a very low value to indicate silence
+            actualCurrentDb = -80.0;
             return MIN_DB;
         }
 
-        double db = 20 * Math.log10(maxSample);
-        db += MAX_DB;
-
-        // Store the actual calculated value (unclamped) for smoothing
+        double db = 20 * Math.log10(maxSample) + MAX_DB;
         actualCurrentDb = db;
 
-        if (db >= MAX_DB-0.5 && !peakFlashActive) {
+        if (db >= MAX_DB - 0.5 && !peakFlashActive) {
             peakFlashActive = true;
             Platform.runLater(() -> peakFlashTimer.playFromStart());
         }
 
-        return Math.max(db, MIN_DB); // Still clamp for visual meter
+        return Math.max(db, MIN_DB);
     }
 }
