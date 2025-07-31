@@ -96,7 +96,8 @@ public class AudioCaptureManager {
                 playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
                 DataLine.Info outputInfo = new DataLine.Info(SourceDataLine.class, playbackFormat);
                 outputLine = (SourceDataLine) AudioSystem.getLine(outputInfo);
-                int outputBufferSize = (int) (playbackFormat.getSampleRate() * playbackFormat.getFrameSize() * 0.2f); // 200ms buffer
+                // Increased buffer to 400ms for more stability
+                int outputBufferSize = (int) (playbackFormat.getSampleRate() * playbackFormat.getFrameSize() * 0.4f);
                 outputLine.open(playbackFormat, outputBufferSize);
                 outputLine.start();
             } catch (LineUnavailableException e) {
@@ -165,7 +166,8 @@ public class AudioCaptureManager {
                     DataLine.Info inputInfo = new DataLine.Info(TargetDataLine.class, captureFormat);
                     inputLine = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(inputInfo);
 
-                    float bufferDurationMs = 50.0f; // 50ms buffer
+                    // Increased buffer to 100ms for more stability
+                    float bufferDurationMs = 100.0f;
                     int inputBufferSize = (int) (captureFormat.getSampleRate() * captureFormat.getFrameSize() * bufferDurationMs / 1000.0f);
                     inputBufferSize -= inputBufferSize % captureFormat.getFrameSize();
 

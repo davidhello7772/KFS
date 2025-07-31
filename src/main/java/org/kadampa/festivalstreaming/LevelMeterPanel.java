@@ -12,7 +12,7 @@ import javax.sound.sampled.Mixer;
 import java.util.HashMap;
 import java.util.Map;
 
-public class LevelMeterPanel extends Stage {
+public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleListener {
 
     private final FlowPane flowPane;
     private final Map<String, LevelMeter> vuMeters = new HashMap<>();
@@ -23,42 +23,34 @@ public class LevelMeterPanel extends Stage {
         flowPane.setHgap(10);
         flowPane.setVgap(10);
         flowPane.setStyle("-fx-background-color: #222;");
-        // Set a preferred width to encourage horizontal layout
         flowPane.setPrefWrapLength(1800);
-
 
         Scene scene = new Scene(flowPane);
         this.setScene(scene);
         this.setTitle("Level Meters");
 
         for (int i = 0; i < inputAudioSources.length; i++) {
-            final int index = i;
             String language = Settings.LANGUAGE_NAMES[i];
-            String hexColor = languageColorsMap.getOrDefault(language, "#4E342E"); // Default color if not found
-            LevelMeter vuMeter = new LevelMeter(language, getMixerInfo(inputAudioSources[i].getValue()), inputAudioSourcesChannel[i].getValue(), Color.web(hexColor));
+            String hexColor = languageColorsMap.getOrDefault(language, "#4E342E");
+            LevelMeter vuMeter = new LevelMeter(language, getMixerInfo(inputAudioSources[i].getValue()), inputAudioSourcesChannel[i].getValue(), Color.web(hexColor), this);
             vuMeters.put(language, vuMeter);
 
-            // Add all meters to the pane initially
             flowPane.getChildren().add(vuMeter.getView());
 
-            // Control visibility and managed state
             boolean isUsed = !"Not Used".equals(inputAudioSources[i].getValue());
             vuMeter.getView().setVisible(isUsed);
             vuMeter.getView().setManaged(isUsed);
-            if(isUsed) {
+            if (isUsed) {
                 vuMeter.start();
             }
 
             inputAudioSources[i].valueProperty().addListener((observable, oldValue, newValue) -> {
                 LevelMeter currentVuMeter = vuMeters.get(language);
                 boolean isNowUsed = !"Not Used".equals(newValue);
-
                 currentVuMeter.getView().setVisible(isNowUsed);
                 currentVuMeter.getView().setManaged(isNowUsed);
-
                 if (isNowUsed) {
                     currentVuMeter.setMixerInfo(getMixerInfo(newValue));
-                    currentVuMeter.start();
                 } else {
                     currentVuMeter.stop();
                 }
@@ -70,8 +62,22 @@ public class LevelMeterPanel extends Stage {
             });
         }
 
-        // Add a handler to stop monitoring when the panel is closed
         this.setOnCloseRequest(event -> stopAllMonitoring());
+    }
+
+    @Override
+    public void onMonitorRequest(LevelMeter source) {
+        boolean wasMonitoring = source.isMonitoring();
+
+        // First, turn off all other monitors
+        for (LevelMeter meter : vuMeters.values()) {
+            if (meter != source && meter.isMonitoring()) {
+                meter.monitoringActiveProperty().set(false);
+            }
+        }
+
+        // Then, toggle the source meter
+        source.monitoringActiveProperty().set(!wasMonitoring);
     }
 
     private Mixer.Info getMixerInfo(String mixerName) {
@@ -95,7 +101,7 @@ public class LevelMeterPanel extends Stage {
 
     public void stopAllMonitoring() {
         for (LevelMeter vuMeter : vuMeters.values()) {
-            vuMeter.stopMonitoring();
+            vuMeter.stopAllMonitoring();
         }
     }
 }
