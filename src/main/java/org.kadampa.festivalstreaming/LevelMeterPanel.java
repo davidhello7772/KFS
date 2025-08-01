@@ -40,19 +40,18 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
             boolean isUsed = !"Not Used".equals(inputAudioSources[i].getValue());
             vuMeter.getView().setVisible(isUsed);
             vuMeter.getView().setManaged(isUsed);
-            if (isUsed) {
-                vuMeter.start();
-            }
 
             inputAudioSources[i].valueProperty().addListener((observable, oldValue, newValue) -> {
                 LevelMeter currentVuMeter = vuMeters.get(language);
                 boolean isNowUsed = !"Not Used".equals(newValue);
                 currentVuMeter.getView().setVisible(isNowUsed);
                 currentVuMeter.getView().setManaged(isNowUsed);
-                if (isNowUsed) {
-                    currentVuMeter.setMixerInfo(getMixerInfo(newValue));
-                } else {
-                    currentVuMeter.stop();
+
+                // Stop the meter, update its info, and then restart it only if the panel is showing.
+                currentVuMeter.stop();
+                currentVuMeter.setMixerInfo(getMixerInfo(newValue));
+                if (isShowing() && isNowUsed) {
+                    currentVuMeter.start();
                 }
             });
 
@@ -62,7 +61,23 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
             });
         }
 
+        this.setOnShowing(event -> startAllMeters());
+        this.setOnHidden(event -> stopAllMeters());
         this.setOnCloseRequest(event -> stopAllMonitoring());
+    }
+
+    private void startAllMeters() {
+        for (LevelMeter vuMeter : vuMeters.values()) {
+            if (vuMeter.getView().isVisible()) {
+                vuMeter.start();
+            }
+        }
+    }
+
+    private void stopAllMeters() {
+        for (LevelMeter vuMeter : vuMeters.values()) {
+            vuMeter.stop();
+        }
     }
 
     @Override
@@ -93,9 +108,7 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
     }
 
     public void closeVUMeters() {
-        for (LevelMeter vuMeter : vuMeters.values()) {
-            vuMeter.stop();
-        }
+        stopAllMeters();
         this.close();
     }
 

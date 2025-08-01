@@ -6,6 +6,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * Manages audio capture from various input devices using a singleton pattern.
+ * This class handles the lifecycle of audio capture threads for each device,
+ * dispatching audio data to registered listeners and managing live monitoring output.
+ */
 public class AudioCaptureManager {
     private static final AudioCaptureManager INSTANCE = new AudioCaptureManager();
 
@@ -13,10 +18,21 @@ public class AudioCaptureManager {
 
     private AudioCaptureManager() {}
 
+    /**
+     * Returns the singleton instance of the AudioCaptureManager.
+     *
+     * @return The single instance of this class.
+     */
     public static AudioCaptureManager getInstance() {
         return INSTANCE;
     }
 
+    /**
+     * Starts live monitoring for a specific audio device and channel.
+     *
+     * @param mixerInfo The mixer info for the device to monitor.
+     * @param channel   The audio channel to monitor ("Left", "Right", or "Stereo").
+     */
     public void startMonitoring(Mixer.Info mixerInfo, String channel) {
         DeviceCapture capture = deviceCaptures.get(mixerInfo);
         if (capture != null) {
@@ -24,6 +40,11 @@ public class AudioCaptureManager {
         }
     }
 
+    /**
+     * Stops live monitoring for a specific audio device.
+     *
+     * @param mixerInfo The mixer info for the device to stop monitoring.
+     */
     public void stopMonitoring(Mixer.Info mixerInfo) {
         DeviceCapture capture = deviceCaptures.get(mixerInfo);
         if (capture != null) {
@@ -31,10 +52,24 @@ public class AudioCaptureManager {
         }
     }
 
+    /**
+     * A listener interface for receiving raw audio data from a capture device.
+     */
     public interface AudioDataListener {
+        /**
+         * Called when new audio data is available.
+         *
+         * @param buffer     The byte buffer containing the audio data.
+         * @param bytesRead  The number of bytes read into the buffer.
+         * @param format     The AudioFormat of the captured data.
+         */
         void onAudioData(byte[] buffer, int bytesRead, AudioFormat format);
     }
 
+    /**
+     * Represents and manages the audio capture process for a single audio device.
+     * It handles the capture thread, listeners, and monitoring output.
+     */
     private static class DeviceCapture {
         private final Mixer.Info mixerInfo;
         private final List<AudioDataListener> listeners = new CopyOnWriteArrayList<>();
@@ -51,6 +86,11 @@ public class AudioCaptureManager {
             this.mixerInfo = mixerInfo;
         }
 
+        /**
+         * Adds a listener to receive audio data. Starts the capture thread if it's the first listener.
+         *
+         * @param listener The listener to add.
+         */
         void addListener(AudioDataListener listener) {
             listeners.add(listener);
             if (listeners.size() == 1) {
@@ -58,6 +98,11 @@ public class AudioCaptureManager {
             }
         }
 
+        /**
+         * Removes a listener. Stops the capture thread if it's the last listener.
+         *
+         * @param listener The listener to remove.
+         */
         void removeListener(AudioDataListener listener) {
             listeners.remove(listener);
             if (listeners.isEmpty()) {
@@ -65,15 +110,28 @@ public class AudioCaptureManager {
             }
         }
 
+        /**
+         * Enables audio monitoring for a specific channel.
+         *
+         * @param channel The channel to monitor ("Left", "Right", "Stereo").
+         */
         void startMonitoring(String channel) {
             this.channel = channel;
             monitoring = true;
         }
 
+        /**
+         * Disables audio monitoring.
+         */
         void stopMonitoring() {
             monitoring = false;
         }
 
+        /**
+         * Finds the best supported audio format for capture, preferring higher sample rates and bit depths.
+         *
+         * @return The optimal supported AudioFormat, or a fallback format.
+         */
         private AudioFormat findBestCaptureFormat() {
             AudioFormat[] preferredFormats = {
                     new AudioFormat(48000, 16, 2, true, false),
@@ -93,6 +151,9 @@ public class AudioCaptureManager {
             return new AudioFormat(44100, 16, 2, true, false); // Fallback
         }
 
+        /**
+         * Sets up the output line (SourceDataLine) for audio monitoring playback.
+         */
         private void setupOutputLine() {
             try {
                 playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
@@ -108,6 +169,15 @@ public class AudioCaptureManager {
             }
         }
 
+        /**
+         * Processes raw audio data for monitoring. This includes channel selection,
+         * down-mixing from stereo to mono, and bit-depth conversion.
+         *
+         * @param inputBuffer  The raw audio buffer from the input line.
+         * @param bytesRead    The number of bytes read from the input buffer.
+         * @param outputBuffer The buffer to write the processed audio data into.
+         * @return The number of bytes written to the output buffer.
+         */
         private int processAudioForMonitoring(byte[] inputBuffer, int bytesRead, byte[] outputBuffer) {
             int inputChannels = captureFormat.getChannels();
             int inputBitDepth = captureFormat.getSampleSizeInBits();
@@ -149,13 +219,13 @@ public class AudioCaptureManager {
                         channel = "Stereo";
                     }
                     switch (channel) {
-                        case "Left":
+                        case SettingsUtil.AUDIO_CHANNEL_LEFT:
                             monoSample = leftSample;
                             break;
-                        case "Right":
+                        case SettingsUtil.AUDIO_CHANNEL_RIGHT:
                             monoSample = rightSample;
                             break;
-                        case "Stereo":
+                        case SettingsUtil.AUDIO_CHANNEL_STEREO:
                         default:
                             monoSample = (leftSample + rightSample) / 2;
                             break;
@@ -178,7 +248,11 @@ public class AudioCaptureManager {
             return outputBytes;
         }
 
-
+        /**
+         * Starts the audio capture thread.
+         * The thread reads from the TargetDataLine, dispatches data to listeners,
+         * and writes to the monitoring line if enabled.
+         */
         private void start() {
             if (running) return;
             running = true;
@@ -188,8 +262,8 @@ public class AudioCaptureManager {
                     DataLine.Info inputInfo = new DataLine.Info(TargetDataLine.class, captureFormat);
                     inputLine = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(inputInfo);
 
-                    // Increased buffer to 100ms for more stability
-                    float bufferDurationMs = 100.0f;
+                    // Increased buffer to 150ms for more stability
+                    float bufferDurationMs = 150.0f;
                     int inputBufferSize = (int) (captureFormat.getSampleRate() * captureFormat.getFrameSize() * bufferDurationMs / 1000.0f);
                     inputBufferSize -= inputBufferSize % captureFormat.getFrameSize();
 
@@ -226,7 +300,11 @@ public class AudioCaptureManager {
             captureThread.start();
         }
 
+        /**
+         * Cleans up audio resources, stopping and closing input and output lines.
+         */
         private void cleanup() {
+            System.out.println("Cleaning - input:" + inputLine.toString()+" - output:"+outputLine.toString());
             if (inputLine != null) {
                 inputLine.stop();
                 inputLine.close();
@@ -239,17 +317,33 @@ public class AudioCaptureManager {
             }
         }
 
+        /**
+         * Stops the audio capture thread and triggers cleanup.
+         */
         private void stop() {
             running = false;
             if (captureThread != null) {
                 captureThread.interrupt();
             }
+            System.out.println("Stop capture: " + inputLine.toString());
         }
 
+        /**
+         * Checks if there are any active listeners for this device.
+         *
+         * @return True if there is at least one listener, false otherwise.
+         */
         boolean hasListeners() {
             return !listeners.isEmpty();
         }
 
+        /**
+         * Writes processed audio data to the output line for monitoring.
+         *
+         * @param buffer      The raw audio buffer.
+         * @param bytesRead   The number of bytes read from the raw buffer.
+         * @param outputBuffer The buffer to write the processed data into.
+         */
         private void writeToMonitor(byte[] buffer, int bytesRead, byte[] outputBuffer) {
             if (outputLine != null && outputLine.isOpen()) {
                 int bytesToWrite = processAudioForMonitoring(buffer, bytesRead, outputBuffer);
@@ -260,11 +354,24 @@ public class AudioCaptureManager {
         }
     }
 
+    /**
+     * Registers a listener for a specific audio device.
+     *
+     * @param mixerInfo The mixer info for the device.
+     * @param listener  The listener to register.
+     */
     public void registerListener(Mixer.Info mixerInfo, AudioDataListener listener) {
         if (mixerInfo == null) return;
         deviceCaptures.computeIfAbsent(mixerInfo, DeviceCapture::new).addListener(listener);
     }
 
+    /**
+     * Unregisters a listener from a specific audio device.
+     * If no listeners remain for a device, its capture resources are released.
+     *
+     * @param mixerInfo The mixer info for the device.
+     * @param listener  The listener to unregister.
+     */
     public void unregisterListener(Mixer.Info mixerInfo, AudioDataListener listener) {
         if (mixerInfo == null) return;
         DeviceCapture capture = deviceCaptures.get(mixerInfo);

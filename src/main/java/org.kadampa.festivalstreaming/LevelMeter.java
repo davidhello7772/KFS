@@ -24,6 +24,43 @@ import javax.sound.sampled.Mixer;
 
 public class LevelMeter {
 
+    //<editor-fold desc="Color Constants">
+    // UI Colors
+    private static final Color COLOR_TEXT_PRIMARY = Color.WHITE;
+    private static final Color COLOR_TEXT_SECONDARY = Color.rgb(255, 255, 255, 0.9);
+    private static final Color COLOR_BORDER = Color.rgb(255, 255, 255, 0.2);
+    private static final Color COLOR_BACKGROUND_DARK_TRANSPARENT = Color.rgb(0, 0, 0, 0.2);
+    private static final Color COLOR_BACKGROUND_METER = Color.rgb(0, 0, 0, 0.3);
+    private static final Color COLOR_SHADOW = Color.rgb(0, 0, 0, 0.4);
+    private static final Color COLOR_SHADOW_GLOW = Color.rgb(255, 255, 255, 0.2);
+
+    // Meter Bar Colors
+    private static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
+    private static final Color COLOR_METER_YELLOW = Color.YELLOW;
+    private static final Color COLOR_METER_RED = Color.RED;
+    private static final Color COLOR_METER_PEAK = Color.rgb(255, 100, 100);
+
+    // Meter Background Colors
+    private static final Color COLOR_METER_BACKGROUND_GREEN = Color.rgb(0, 80, 0);
+    private static final Color COLOR_METER_BACKGROUND_YELLOW = Color.rgb(80, 80, 0);
+    private static final Color COLOR_METER_BACKGROUND_RED = Color.rgb(80, 0, 0);
+
+    // Status Indicator Colors
+    private static final Color COLOR_STATUS_INACTIVE = Color.rgb(100, 100, 100);
+    private static final Color COLOR_STATUS_OK = Color.LIMEGREEN;
+    private static final Color COLOR_STATUS_WARN = Color.YELLOW;
+    private static final Color COLOR_STATUS_PEAK = Color.RED;
+    private static final Color COLOR_STATUS_OFF = Color.GRAY;
+    private static final Color COLOR_STATUS_STROKE = Color.rgb(255, 255, 255, 0.3);
+
+    // Status Glow Colors
+    private static final Color COLOR_GLOW_OK = Color.rgb(50, 205, 50, 0.8);
+    private static final Color COLOR_GLOW_WARN = Color.rgb(255, 255, 0, 0.8);
+    private static final Color COLOR_GLOW_PEAK = Color.rgb(255, 0, 0, 0.8);
+    private static final Color COLOR_GLOW_OFF = Color.rgb(100, 100, 100, 0.8);
+    private static final Color COLOR_SCALE_MARK = Color.rgb(255, 255, 255, 0.8);
+    //</editor-fold>
+
     public interface MonitorToggleListener {
         void onMonitorRequest(LevelMeter source);
     }
@@ -94,7 +131,7 @@ public class LevelMeter {
         dropShadow.setRadius(16);
         dropShadow.setOffsetX(0);
         dropShadow.setOffsetY(8);
-        dropShadow.setColor(Color.rgb(0, 0, 0, 0.2));
+        dropShadow.setColor(COLOR_BACKGROUND_DARK_TRANSPARENT);
         view.setEffect(dropShadow);
 
         setupAnimation();
@@ -133,13 +170,13 @@ public class LevelMeter {
 
         Label languageLabel = new Label(language.toUpperCase());
         languageLabel.setFont(Font.font("System", FontWeight.BOLD, 20));
-        languageLabel.setTextFill(Color.WHITE);
+        languageLabel.setTextFill(COLOR_TEXT_PRIMARY);
         languageLabel.setAlignment(Pos.CENTER);
         addTextShadow(languageLabel);
 
         audioInterfaceLabel = new Label();
         audioInterfaceLabel.setFont(Font.font("System", FontWeight.NORMAL, 13));
-        audioInterfaceLabel.setTextFill(Color.rgb(255, 255, 255, 0.9));
+        audioInterfaceLabel.setTextFill(COLOR_TEXT_SECONDARY);
         audioInterfaceLabel.setWrapText(true);
         audioInterfaceLabel.setAlignment(Pos.CENTER);
         audioInterfaceLabel.setTextAlignment(TextAlignment.CENTER);
@@ -199,10 +236,10 @@ public class LevelMeter {
 
         dbLabel = new Label(String.format("%.1f dB", MIN_DB));
         dbLabel.setFont(Font.font("System", FontWeight.BOLD, 15));
-        dbLabel.setTextFill(Color.WHITE);
+        dbLabel.setTextFill(COLOR_TEXT_PRIMARY);
         dbLabel.setAlignment(Pos.CENTER);
         dbLabel.setMinWidth(150);
-        dbLabel.setStyle("-fx-background-color: rgba(0, 0, 0, 0.2); -fx-background-radius: 25; -fx-padding: 8 40; -fx-border-color: rgba(255, 255, 255, 0.2); -fx-border-width: 1; -fx-border-radius: 25;");
+        dbLabel.setStyle("-fx-background-color: " + toRgbaString(COLOR_BACKGROUND_DARK_TRANSPARENT) + "; -fx-background-radius: 25; -fx-padding: 8 40; -fx-border-color: " + toRgbaString(COLOR_BORDER) + "; -fx-border-width: 1; -fx-border-radius: 25;");
         addTextShadow(dbLabel);
 
         monitorButton = new Button();
@@ -241,17 +278,17 @@ public class LevelMeter {
         String gradientStyle = createGradientStyle(color);
         view.setStyle(gradientStyle +
             "-fx-background-radius: 16; " +
-            "-fx-border-color: rgba(255, 255, 255, 0.2); " +
+            "-fx-border-color: " + toRgbaString(COLOR_BORDER) + "; " +
             "-fx-border-width: 2; " +
             "-fx-border-radius: 16;");
     }
 
     private void updateStatusIndicator() {
-        statusIndicator.setFill(Color.rgb(100, 100, 100));
-        statusIndicator.setStroke(Color.rgb(255, 255, 255, 0.3));
+        statusIndicator.setFill(COLOR_STATUS_INACTIVE);
+        statusIndicator.setStroke(COLOR_STATUS_STROKE);
         statusIndicator.setStrokeWidth(2);
         statusGlow.setRadius(10);
-        statusGlow.setColor(Color.rgb(39, 174, 96, 0.8));
+        statusGlow.setColor(COLOR_GLOW_OK);
     }
 
     private void addTextShadow(Label label) {
@@ -259,7 +296,7 @@ public class LevelMeter {
         textShadow.setRadius(2);
         textShadow.setOffsetX(0);
         textShadow.setOffsetY(2);
-        textShadow.setColor(Color.rgb(0, 0, 0, 0.4));
+        textShadow.setColor(COLOR_SHADOW);
         label.setEffect(textShadow);
     }
 
@@ -292,12 +329,12 @@ public class LevelMeter {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
             Label label = new Label((dbValue >= 0 ? "+" : "") + String.format("%.0f", dbValue));
             label.setFont(Font.font("System", FontWeight.BOLD, 12));
-            label.setTextFill(Color.WHITE);
+            label.setTextFill(COLOR_TEXT_PRIMARY);
             label.setLayoutY(y - 8);
             addTextShadow(label);
 
             Rectangle scaleMark = new Rectangle(10, 2);
-            scaleMark.setFill(Color.rgb(255, 255, 255, 0.8));
+            scaleMark.setFill(COLOR_SCALE_MARK);
             scaleMark.setLayoutX(-12);
             scaleMark.setLayoutY(y - 1);
             scaleMark.setArcWidth(1);
@@ -320,8 +357,8 @@ public class LevelMeter {
         clipRect.setArcHeight(30);
         meterPane.setClip(clipRect);
 
-        Rectangle meterBackground = new Rectangle(METER_WIDTH, METER_HEIGHT, Color.rgb(0, 0, 0, 0.3));
-        meterBackground.setStroke(Color.rgb(255, 255, 255, 0.2));
+        Rectangle meterBackground = new Rectangle(METER_WIDTH, METER_HEIGHT, COLOR_BACKGROUND_METER);
+        meterBackground.setStroke(COLOR_BORDER);
         meterBackground.setStrokeWidth(1);
         meterBackground.setArcWidth(30);
         meterBackground.setArcHeight(30);
@@ -330,21 +367,21 @@ public class LevelMeter {
         innerShadow.setRadius(8);
         innerShadow.setOffsetX(0);
         innerShadow.setOffsetY(2);
-        innerShadow.setColor(Color.rgb(0, 0, 0, 0.3));
+        innerShadow.setColor(COLOR_BACKGROUND_METER);
         meterBackground.setEffect(innerShadow);
 
-        greenBackground = new Rectangle(METER_WIDTH, 0, Color.rgb(0, 80, 0));
-        yellowBackground = new Rectangle(METER_WIDTH, 0, Color.rgb(80, 80, 0));
-        redBackground = new Rectangle(METER_WIDTH, 0, Color.rgb(80, 0, 0));
-        greenBar = new Rectangle(METER_WIDTH, 0, Color.LIMEGREEN);
-        yellowBar = new Rectangle(METER_WIDTH, 0, Color.YELLOW);
-        redBar = new Rectangle(METER_WIDTH, 0, Color.RED);
-        peakHoldBar = new Rectangle(METER_WIDTH, 2, Color.rgb(255, 100, 100));
+        greenBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_GREEN);
+        yellowBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_YELLOW);
+        redBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_RED);
+        greenBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_GREEN);
+        yellowBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_YELLOW);
+        redBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_RED);
+        peakHoldBar = new Rectangle(METER_WIDTH, 2, COLOR_METER_PEAK);
         peakHoldBar.setVisible(false);
 
         DropShadow glow = new DropShadow();
         glow.setRadius(20);
-        glow.setColor(Color.rgb(255, 255, 255, 0.2));
+        glow.setColor(COLOR_SHADOW_GLOW);
         greenBar.setEffect(glow);
         yellowBar.setEffect(glow);
         redBar.setEffect(glow);
@@ -362,7 +399,6 @@ public class LevelMeter {
 
         animationTimer = new AnimationTimer() {
             private long lastUpdate = 0;
-            private final long updateIntervalNs = 1_000_000_000 / 60;
 
             @Override
             public void handle(long now) {
@@ -403,26 +439,26 @@ public class LevelMeter {
 
     private void updateStatusIndicator(long now) {
         Color statusColor;
-        Color glowColor = Color.rgb(100, 100, 100, 0.8);
+        Color glowColor = COLOR_GLOW_OFF;
         if (peakFlashActive) {
-            statusColor = Color.RED;
+            statusColor = COLOR_STATUS_PEAK;
         } else if (now - redPeakTimestamp < 1_000_000_000L) {
-            statusColor = Color.RED;
+            statusColor = COLOR_STATUS_PEAK;
         } else if (now - yellowPeakTimestamp < 1_000_000_000L) {
-            statusColor = Color.YELLOW;
+            statusColor = COLOR_STATUS_WARN;
         } else {
             if (displayDb > RED_THRESHOLD_DB) {
-                statusColor = Color.RED;
-                glowColor = Color.rgb(255, 0, 0, 0.8);
+                statusColor = COLOR_STATUS_PEAK;
+                glowColor = COLOR_GLOW_PEAK;
             } else if (displayDb > YELLOW_THRESHOLD_DB) {
-                statusColor = Color.YELLOW;
-                glowColor = Color.rgb(255, 255, 0, 0.8);
+                statusColor = COLOR_STATUS_WARN;
+                glowColor = COLOR_GLOW_WARN;
             } else {
-                statusColor = Color.LIMEGREEN;
-                glowColor = Color.rgb(50, 205, 50, 0.8);
+                statusColor = COLOR_STATUS_OK;
+                glowColor = COLOR_GLOW_OK;
                 if (displayDb <= MIN_DB) {
-                    statusColor = Color.GRAY;
-                    glowColor = Color.rgb(100, 100, 100, 0.8);
+                    statusColor = COLOR_STATUS_OFF;
+                    glowColor = COLOR_GLOW_OFF;
                 }
             }
         }
@@ -466,7 +502,7 @@ public class LevelMeter {
         if (peakDb > MIN_DB) {
             double peakY = METER_HEIGHT * (1 - (peakDb - MIN_DB) / totalRange);
             peakHoldBar.setY(peakY - 1);
-            peakHoldBar.setFill(peakDb > RED_THRESHOLD_DB ? Color.RED : (peakDb > YELLOW_THRESHOLD_DB ? Color.YELLOW : Color.LIMEGREEN));
+            peakHoldBar.setFill(peakDb > RED_THRESHOLD_DB ? COLOR_METER_RED : (peakDb > YELLOW_THRESHOLD_DB ? COLOR_METER_YELLOW : COLOR_METER_GREEN));
             peakHoldBar.setVisible(true);
         } else {
             peakHoldBar.setVisible(false);
@@ -480,9 +516,9 @@ public class LevelMeter {
     }
 
     private void updateAudioInterfaceLabel() {
-        String text = mixerInfo != null ? mixerInfo.getName() : "Not Selected";
-        String channelDisplay = (channel == null || channel.isEmpty()) ? "Join" : channel;
-        text += "Join".equalsIgnoreCase(channelDisplay) ? " - Stereo" : " - " + channelDisplay;
+        String text = mixerInfo != null ? mixerInfo.getName() : SettingsUtil.AUDIO_SOURCE_NOT_SELECTED;
+        String channelDisplay = (channel == null || channel.isEmpty()) ? SettingsUtil.AUDIO_CHANNEL_JOIN : channel;
+        text += SettingsUtil.AUDIO_CHANNEL_JOIN.equalsIgnoreCase(channelDisplay) ? " - " + SettingsUtil.AUDIO_CHANNEL_STEREO : " - " + channelDisplay;
         audioInterfaceLabel.setText(text);
     }
 
@@ -490,9 +526,7 @@ public class LevelMeter {
         stop();
         this.mixerInfo = mixerInfo;
         updateAudioInterfaceLabel();
-        if (mixerInfo != null) {
-            start();
-        } else {
+        if (mixerInfo == null) {
             currentDb = MIN_DB;
         }
     }
@@ -543,8 +577,8 @@ public class LevelMeter {
                 short rightSample = (short) ((buffer[i + 3] << 8) | (buffer[i + 2] & 0xFF));
                 double rightAbs = Math.abs(rightSample / 32768.0);
 
-                if ("Left".equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, leftAbs);
-                else if ("Right".equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, rightAbs);
+                if (SettingsUtil.AUDIO_CHANNEL_LEFT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, leftAbs);
+                else if (SettingsUtil.AUDIO_CHANNEL_RIGHT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, rightAbs);
                 else maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
 
             } else if (format.getSampleSizeInBits() == 24) {
@@ -559,8 +593,8 @@ public class LevelMeter {
                 if ((rightSample & 0x800000) != 0) rightSample |= 0xFF000000;
                 double rightAbs = Math.abs(rightSample / 8388608.0);
 
-                if ("Left".equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, leftAbs);
-                else if ("Right".equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, rightAbs);
+                if (SettingsUtil.AUDIO_CHANNEL_LEFT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, leftAbs);
+                else if (SettingsUtil.AUDIO_CHANNEL_RIGHT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, rightAbs);
                 else maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
             }
         }
@@ -579,6 +613,19 @@ public class LevelMeter {
         }
 
         return Math.max(db, MIN_DB);
+    }
+
+    /**
+     * Converts a JavaFX Color object to an RGBA string for use in CSS.
+     * @param color The color to convert.
+     * @return The CSS RGBA string.
+     */
+    private String toRgbaString(Color color) {
+        return String.format("rgba(%d, %d, %d, %f)",
+                (int) (color.getRed() * 255),
+                (int) (color.getGreen() * 255),
+                (int) (color.getBlue() * 255),
+                color.getOpacity());
     }
 }
 

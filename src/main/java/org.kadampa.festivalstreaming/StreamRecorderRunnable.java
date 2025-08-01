@@ -129,13 +129,13 @@ public class StreamRecorderRunnable implements Runnable {
             //input 2 is English (not to be mixed with other language, but need the  prayer to be added)
             if(i==1) {
                 //Here it's the prayer
-                if(audioInputsChannel.get(0).equals("Join"))
+                if(SettingsUtil.AUDIO_CHANNEL_JOIN.equals(audioInputsChannel.get(0)))
                     filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
                 else
                     filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
-                if(audioInputsChannel.get(0).equals("Left"))
+                if(SettingsUtil.AUDIO_CHANNEL_LEFT.equals(audioInputsChannel.get(0)))
                     filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
-                if(audioInputsChannel.get(0).equals("Right"))
+                if(SettingsUtil.AUDIO_CHANNEL_RIGHT.equals(audioInputsChannel.get(0)))
                     filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0[prayers];");
                 //We new duplicate prayers to use it in the different mixes
                 //The first 2 channel don't have the mix, because they are the prayers itself and the english to be mixed with the translation
@@ -150,13 +150,13 @@ public class StreamRecorderRunnable implements Runnable {
 
                 int audioDelayToRemoveEcho = audioDelay + enMixDelay;
                 //Here it's the english low level to mix with other languages than english
-                if(audioInputsChannel.get(i-1).equals("Join"))
+                if(SettingsUtil.AUDIO_CHANNEL_JOIN.equals(audioInputsChannel.get(i-1)))
                     filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelayToRemoveEcho).append("|").append(audioDelayToRemoveEcho).append(",pan=mono|c0=c0[englishToBeMixed];");
                 else
                     filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
-                if(audioInputsChannel.get(i-1).equals("Left"))
+                if(SettingsUtil.AUDIO_CHANNEL_LEFT.equals(audioInputsChannel.get(i-1)))
                     filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelayToRemoveEcho).append("|").append(audioDelayToRemoveEcho).append(",pan=mono|c0=c0[englishToBeMixed];");
-                if(audioInputsChannel.get(i-1).equals("Right"))
+                if(SettingsUtil.AUDIO_CHANNEL_RIGHT.equals(audioInputsChannel.get(i-1)))
                     filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelayToRemoveEcho).append("|").append(audioDelayToRemoveEcho).append(",pan=mono|c0=c0[englishToBeMixed];");
                 //We new duplicate to use it in the different mixes
                 //The first 3 channel don't have the mix, because they are the prayers, the english to be mixed with the translation itself and the english
@@ -169,14 +169,14 @@ public class StreamRecorderRunnable implements Runnable {
 
             } else if(i==3) {
                 //Here it's the english that need the mix of the prayer but not the english low level
-                if(audioInputsChannel.get(i-1).equals("Join"))
+                if(SettingsUtil.AUDIO_CHANNEL_JOIN.equals(audioInputsChannel.get(i-1)))
                     filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 else
                     filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
-                if(audioInputsChannel.get(i-1).equals("Right")) {
+                if(SettingsUtil.AUDIO_CHANNEL_RIGHT.equals(audioInputsChannel.get(i-1))) {
                     filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 }
-                if(audioInputsChannel.get(i-1).equals("Left")) {
+                if(SettingsUtil.AUDIO_CHANNEL_LEFT.equals(audioInputsChannel.get(i-1))) {
                     filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 }
                 //For the english language, the noiseReduction value has a different meaning that the other languages
@@ -200,14 +200,14 @@ public class StreamRecorderRunnable implements Runnable {
                 mapCommand.add("\"[outmixed" + i + "]\";");
 
             } else {
-                if(audioInputsChannel.get(i-1).equals("Join"))
+                if(SettingsUtil.AUDIO_CHANNEL_JOIN.equals(audioInputsChannel.get(i-1)))
                     filterCommand.append("[").append(deviceNumber).append(":a]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 else
                     filterCommand.append("[").append(deviceNumber).append(":a]channelsplit=channel_layout=stereo[left").append(i).append("][right").append(i).append("];");
-                if(audioInputsChannel.get(i-1).equals("Right")) {
+                if(SettingsUtil.AUDIO_CHANNEL_RIGHT.equals(audioInputsChannel.get(i-1))) {
                     filterCommand.append("[left").append(i).append("]anullsink;[right").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 }
-                if(audioInputsChannel.get(i-1).equals("Left")) {
+                if(SettingsUtil.AUDIO_CHANNEL_LEFT.equals(audioInputsChannel.get(i-1))) {
                     filterCommand.append("[right").append(i).append("]anullsink;[left").append(i).append("]adelay=").append(audioDelay).append("|").append(audioDelay).append(",pan=mono|c0=c0");
                 }
                 //For the other language, the noiseReduction value is the number of time we apply the filter
@@ -319,7 +319,7 @@ public class StreamRecorderRunnable implements Runnable {
             String deviceName = deviceNames[i];
             String deviceInputChannel = channelInfos[i];
             int noiseReductionIteration = Integer.parseInt(noiseReductionVals[i]);
-            if (!Objects.equals(deviceName, "Not Used")) {
+            if (!Objects.equals(deviceName, SettingsUtil.AUDIO_SOURCE_NOT_USED)) {
                 audioDevicesList.add(deviceName);
                 audioInputsChannel.add(deviceInputChannel);
                 noiseReductionValues.add(noiseReductionIteration);

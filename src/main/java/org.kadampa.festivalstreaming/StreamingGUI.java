@@ -346,9 +346,9 @@ public class StreamingGUI extends Application {
             }
         }
         for (ComboBox<String> audioInputChannel : inputAudioSourcesChannel) {
-            audioInputChannel.getItems().add("Join");
-            audioInputChannel.getItems().add("Left");
-            audioInputChannel.getItems().add("Right");
+            audioInputChannel.getItems().add(SettingsUtil.AUDIO_CHANNEL_JOIN);
+            audioInputChannel.getItems().add(SettingsUtil.AUDIO_CHANNEL_LEFT);
+            audioInputChannel.getItems().add(SettingsUtil.AUDIO_CHANNEL_RIGHT);
             }
         for (ComboBox<String> noiseReductionInput : inputNoiseReductionValues) {
             noiseReductionInput.getItems().addAll("0","1","2","3");
@@ -816,8 +816,10 @@ public class StreamingGUI extends Application {
 
         Label timeNeededinfoLabel = new Label("?");
         timeNeededinfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltipTimeNeededOutput = new Tooltip("The time needed to open an audio device. This is important because each audio device takes time to open so it it async the audios.\n" +
-                "This parameter is used to readjust the sync. To know this value, in the ffmeg output, look for the start value for device 1 and for device 2, and look for the difference.\n Usually, it's around 650ms");
+        Tooltip tooltipTimeNeededOutput = new Tooltip("""
+            The time needed to open an audio device. This is important because each audio device takes time to open so it it async the audios.
+            This parameter is used to readjust the sync. To know this value, in the ffmeg output, look for the start value for device 1 and for device 2, and look for the difference.
+             Usually, it's around 650ms""");
         Tooltip.install(timeNeededinfoLabel, tooltipTimeNeededOutput);
         tooltipTimeNeededOutput.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
         tooltipTimeNeededOutput.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
@@ -1277,7 +1279,7 @@ public class StreamingGUI extends Application {
                 firstParameter = false;
             }
         }
-        return baseURL + parameters.toString();
+        return baseURL + parameters;
     }
 
     private boolean checkParameters() {
@@ -1437,7 +1439,7 @@ public class StreamingGUI extends Application {
         if (errorMatcher.find()) {
             text.setFill(Color.RED);
             bgColor = "-orange-color";
-            Task<Void> task = new Task<Void>() {
+            Task<Void> task = new Task<>() {
                 @Override
                 protected Void call() {
                     if (!playingError) {
@@ -1448,12 +1450,10 @@ public class StreamingGUI extends Application {
                         CountDownLatch latch = new CountDownLatch(1);
 
                         mediaPlayer.play();
-                        mediaPlayer.setOnEndOfMedia(() -> {
-                            Platform.runLater(() -> {
-                                playingError = false;
-                                latch.countDown();
-                            });
-                        });
+                        mediaPlayer.setOnEndOfMedia(() -> Platform.runLater(() -> {
+                            playingError = false;
+                            latch.countDown();
+                        }));
 
                         try {
                             latch.await();  // Wait for the media to finish
