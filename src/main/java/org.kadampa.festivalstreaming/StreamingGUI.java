@@ -81,6 +81,7 @@ public class StreamingGUI extends Application {
     private ScrollPane consoleOutputScrollPane;
     private final SVGPath stopPath = new SVGPath();
     private final TextArea textAreaInfo = new TextArea();
+    private final TextArea systemInfoTextArea = new TextArea();
     private static final int WINDOW_WIDTH = 900;
     private static final int WINDOW_HEIGHT = 950;
     private static final double TOOLTIP_DELAY = 0.2;
@@ -354,12 +355,12 @@ public class StreamingGUI extends Application {
             noiseReductionInput.getItems().addAll("0","1","2","3");
         }
 
-        List<Webcam> webcams = Webcam.getWebcams();
-        for (Webcam webcam : webcams) {
-            this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
-        }
+//        List<Webcam> webcams = Webcam.getWebcams();
+//        for (Webcam webcam : webcams) {
+//            this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
+//        }
         // Load settings
-        settings = SettingsUtil.loadSettings();
+        settings = SettingsUtil.loadSettings("settings");
         // Check for development mode system property
         if (Boolean.parseBoolean(System.getProperty("kfs.developmentMode"))) {
             settings.setDevelopmentMode(true);
@@ -402,14 +403,17 @@ public class StreamingGUI extends Application {
             mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().add("bg-" + color));
         }
     }
+
+    // Updated applySettings() method in StreamingGUI.java
     private void applySettings() {
         Map<String, String> audioSettings = settings.getAudioSources();
         for (int i = 0; i < inputAudioSources.length; i++) {
-            inputAudioSources[i].setValue(audioSettings.getOrDefault("audio" + i, "Not Used"));
-            String languageKey = Settings.LANGUAGES[i].name();
-            ColorPicker colorPicker = languageColorPickers.get(languageKey);
+            String languageName = Settings.LANGUAGES[i].name();
+            inputAudioSources[i].setValue(audioSettings.getOrDefault(languageName, "Not Used"));
+
+            ColorPicker colorPicker = languageColorPickers.get(languageName);
             if (colorPicker != null) {
-                String hexColor = settings.getLanguageColors().get(languageKey);
+                String hexColor = settings.getLanguageColors().get(languageName);
                 if (hexColor != null) {
                     colorPicker.setValue(Color.web(hexColor));
                 } else {
@@ -417,13 +421,18 @@ public class StreamingGUI extends Application {
                     colorPicker.setValue(Color.GREY); // or Color.web("#808080") for a specific grey
                 }
             }
-         }
+        }
+
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
-            inputAudioSourcesChannel[i].setValue(settings.getAudioSourcesChannel().getOrDefault("audioChannel" + i, ""));
-             }
+            String languageName = Settings.LANGUAGES[i].name();
+            inputAudioSourcesChannel[i].setValue(settings.getAudioSourcesChannel().getOrDefault(languageName, ""));
+        }
+
         for (int i = 0; i < inputNoiseReductionValues.length; i++) {
-            if(settings.getNoiseReductionLevel()!=null)
-                inputNoiseReductionValues[i].setValue(settings.getNoiseReductionLevel().getOrDefault("noiseReductionLevel" + i, "0"));
+            String languageName = Settings.LANGUAGES[i].name();
+            if(settings.getNoiseReductionLevel() != null) {
+                inputNoiseReductionValues[i].setValue(settings.getNoiseReductionLevel().getOrDefault(languageName, "0"));
+            }
         }
 
         for (int i = 0; i < inputAudioSources.length; i++) {
@@ -438,6 +447,8 @@ public class StreamingGUI extends Application {
                 inputNoiseReductionValues[i].setDisable(true);
             }
         }
+
+        // Rest of the method remains unchanged...
         inputenMixDelay.setText(settings.getEnMixDelay());
         inputVideoSource.setValue(settings.getVideoSource());
         inputVideoSourceBuffer.setValue(settings.getVideoBuffer());
@@ -457,16 +468,24 @@ public class StreamingGUI extends Application {
         inputFramePerSecond.setValue(settings.getFps());
     }
 
+    // Updated saveSettings() method in StreamingGUI.java
     private void saveSettings() {
         for (int i = 0; i < inputAudioSources.length; i++) {
-            settings.getAudioSources().put("audio" + i, inputAudioSources[i].getValue());
+            String languageName = Settings.LANGUAGES[i].name();
+            settings.getAudioSources().put(languageName, inputAudioSources[i].getValue());
         }
+
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
-            settings.getAudioSourcesChannel().put("audioChannel" + i, inputAudioSourcesChannel[i].getValue());
+            String languageName = Settings.LANGUAGES[i].name();
+            settings.getAudioSourcesChannel().put(languageName, inputAudioSourcesChannel[i].getValue());
         }
+
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
-            settings.getNoiseReductionLevel().put("noiseReductionLevel" + i, inputNoiseReductionValues[i].getValue());
+            String languageName = Settings.LANGUAGES[i].name();
+            settings.getNoiseReductionLevel().put(languageName, inputNoiseReductionValues[i].getValue());
         }
+
+        // Rest of the method remains unchanged...
         settings.setEnMixDelay((inputenMixDelay.getText()));
         settings.setVideoSource(inputVideoSource.getValue());
         settings.setVideoBitrate(inputVideoBitrate.getValue());
@@ -487,7 +506,7 @@ public class StreamingGUI extends Application {
         for (Map.Entry<String, ColorPicker> entry : languageColorPickers.entrySet()) {
             settings.getLanguageColors().put(entry.getKey(), entry.getValue().getValue().toString());
         }
-        SettingsUtil.saveSettings(settings);
+        SettingsUtil.saveSettings(settings, "settings");
     }
 
     private ScrollPane buildUI() {
@@ -533,6 +552,12 @@ public class StreamingGUI extends Application {
         infoTab.setClosable(false);
         infoTab.setContent(buildTabInfo());
         tabPane.getTabs().add(infoTab);
+
+        // System Info Tab
+        Tab systemInfoTab = new Tab("System Info");
+        systemInfoTab.setClosable(false);
+        systemInfoTab.setContent(buildTabSystemInfo());
+        tabPane.getTabs().add(systemInfoTab);
 
         root.getChildren().addAll(titleBox,nowPlayingBox,tabPane);
 
@@ -739,7 +764,7 @@ public class StreamingGUI extends Application {
 
         row++;
         //If it's empty, we select the first element
-        if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
+      //  if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
 
         addLanguageRow(inputGrid, row, Settings.LANGUAGES[0].name() + ":", inputAudioSources[0], inputAudioSourcesChannel[0],null,Settings.LANGUAGES[0].name());
         Label EnMixDelayInfoLabel = new Label("?");
