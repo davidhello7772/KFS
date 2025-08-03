@@ -355,10 +355,10 @@ public class StreamingGUI extends Application {
             noiseReductionInput.getItems().addAll("0","1","2","3");
         }
 
-//        List<Webcam> webcams = Webcam.getWebcams();
-//        for (Webcam webcam : webcams) {
-//            this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
-//        }
+        List<Webcam> webcams = Webcam.getWebcams();
+        for (Webcam webcam : webcams) {
+            this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
+        }
         // Load settings
         settings = SettingsUtil.loadSettings("settings");
         // Check for development mode system property
@@ -759,7 +759,7 @@ public class StreamingGUI extends Application {
 
         row++;
         //If it's empty, we select the first element
-      //  if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
+        if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
 
         addLanguageRow(inputGrid, row, Settings.LANGUAGES[0].name() + ":", inputAudioSources[0], inputAudioSourcesChannel[0],null,Settings.LANGUAGES[0].name());
         Label EnMixDelayInfoLabel = new Label("?");
