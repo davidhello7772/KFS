@@ -553,11 +553,6 @@ public class StreamingGUI extends Application {
         infoTab.setContent(buildTabInfo());
         tabPane.getTabs().add(infoTab);
 
-        // System Info Tab
-        Tab systemInfoTab = new Tab("System Info");
-        systemInfoTab.setClosable(false);
-        systemInfoTab.setContent(buildTabSystemInfo());
-        tabPane.getTabs().add(systemInfoTab);
 
         root.getChildren().addAll(titleBox,nowPlayingBox,tabPane);
 

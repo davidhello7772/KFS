@@ -303,8 +303,8 @@ public class LevelMeter {
     private String createGradientStyle(Color color) {
         Color darkerColor = color.darker();
         return String.format("-fx-background-color: linear-gradient(to bottom, #%s, #%s); ",
-            color.toString().substring(2),
-            darkerColor.toString().substring(2));
+            darkerColor.toString().substring(2),
+            color.toString().substring(2));
     }
 
     private HBox createVerticalMeterWithGraduations() {

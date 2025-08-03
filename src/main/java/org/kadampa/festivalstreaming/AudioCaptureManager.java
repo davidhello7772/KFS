@@ -125,6 +125,9 @@ public class AudioCaptureManager {
          */
         void stopMonitoring() {
             monitoring = false;
+            if (outputLine != null) {
+                outputLine.flush();
+            }
         }
 
         /**
