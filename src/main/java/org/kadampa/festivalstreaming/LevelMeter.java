@@ -125,8 +125,8 @@ public class LevelMeter {
         this.monitorToggleListener = listener;
 
         if ("English (for mix)".equals(language)) {
-            greenThresholdDb = -3.0 - 24.0;
-            yellowThresholdDb = 6.0 - 24.0;
+            greenThresholdDb = - 24.0;
+            yellowThresholdDb = -17;
             redThresholdDb = 12.0;
         } else {
             greenThresholdDb = -3.0;
