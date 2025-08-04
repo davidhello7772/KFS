@@ -35,18 +35,21 @@ public class LevelMeter {
     private static final Color COLOR_SHADOW_GLOW = Color.rgb(255, 255, 255, 0.2);
 
     // Meter Bar Colors
+    private static final Color COLOR_METER_BLUE = Color.rgb(0, 150, 255);
     private static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
     private static final Color COLOR_METER_YELLOW = Color.ORANGE;
     private static final Color COLOR_METER_RED = Color.RED;
     private static final Color COLOR_METER_PEAK = Color.rgb(255, 100, 100);
 
     // Meter Background Colors
+    private static final Color COLOR_METER_BACKGROUND_BLUE = Color.rgb(0, 50, 100);
     private static final Color COLOR_METER_BACKGROUND_GREEN = Color.rgb(0, 80, 0);
     private static final Color COLOR_METER_BACKGROUND_YELLOW = Color.rgb(80, 80, 0);
     private static final Color COLOR_METER_BACKGROUND_RED = Color.rgb(80, 0, 0);
 
     // Status Indicator Colors
     private static final Color COLOR_STATUS_INACTIVE = Color.rgb(100, 100, 100);
+    private static final Color COLOR_STATUS_LOW = Color.rgb(0, 150, 255);
     private static final Color COLOR_STATUS_OK = Color.LIMEGREEN;
     private static final Color COLOR_STATUS_WARN = Color.ORANGE;
     private static final Color COLOR_STATUS_PEAK = Color.RED;
@@ -54,6 +57,7 @@ public class LevelMeter {
     private static final Color COLOR_STATUS_STROKE = Color.rgb(255, 255, 255, 0.3);
 
     // Status Glow Colors
+    private static final Color COLOR_GLOW_LOW = Color.rgb(0, 150, 255, 0.8);
     private static final Color COLOR_GLOW_OK = Color.rgb(50, 205, 50, 0.8);
     private static final Color COLOR_GLOW_WARN = Color.rgb(255, 165, 0, 0.8);
     private static final Color COLOR_GLOW_PEAK = Color.rgb(255, 0, 0, 0.8);
@@ -74,18 +78,20 @@ public class LevelMeter {
     private Mixer.Info mixerInfo;
     private volatile boolean running = false;
     private String channel;
+    private final String language;
     private AudioCaptureManager.AudioDataListener audioDataListener;
 
-    private Rectangle greenBar, yellowBar, redBar, peakHoldBar;
-    private Rectangle greenBackground, yellowBackground, redBackground;
+    private Rectangle blueBar, greenBar, yellowBar, redBar, peakHoldBar;
+    private Rectangle blueBackground, greenBackground, yellowBackground, redBackground;
     private AnimationTimer animationTimer;
     private PauseTransition peakHoldTimer;
 
     //<editor-fold desc="Meter Constants">
     private static final double METER_CEILING_DB = 15.0;
     private static final double MIN_DB = -40.0;
-    private static final double YELLOW_THRESHOLD_DB = 0.0;
-    private static final double RED_THRESHOLD_DB = 12.0;
+    private final double greenThresholdDb;
+    private final double yellowThresholdDb;
+    private final double redThresholdDb;
     //</editor-fold>
 
     private static final double METER_HEIGHT = 300;
@@ -106,15 +112,28 @@ public class LevelMeter {
 
     private long redPeakTimestamp = 0;
     private long yellowPeakTimestamp = 0;
+    private long greenPeakTimestamp = 0;
 
     private Button monitorButton;
     private final BooleanProperty monitoringActive = new SimpleBooleanProperty(false);
 
     public LevelMeter(String language, Mixer.Info mixerInfo, String channel, Color backgroundColor, MonitorToggleListener listener) {
+        this.language = language;
         this.mixerInfo = mixerInfo;
         this.channel = channel;
         this.originalBackgroundColor = backgroundColor;
         this.monitorToggleListener = listener;
+
+        if ("English (for mix)".equals(language)) {
+            greenThresholdDb = -3.0 - 24.0;
+            yellowThresholdDb = 6.0 - 24.0;
+            redThresholdDb = 12.0;
+        } else {
+            greenThresholdDb = -3.0;
+            yellowThresholdDb = 6.0;
+            redThresholdDb = 12.0;
+        }
+
         this.view = new VBox();
         this.view.setAlignment(Pos.CENTER);
 
@@ -322,13 +341,16 @@ public class LevelMeter {
         graduationPane.setPrefHeight(METER_HEIGHT);
         graduationPane.setMinWidth(35);
 
-        double[] labelDbValues = {-37, -30, -20, -10, 0, 6, 12};
+        double[] labelDbValues = {-37, -30, -20, -10, -3, 0, 6, 12};
+        if ("English (for mix)".equals(language)) {
+            labelDbValues = new double[]{-37, -30, -24, -20, -10, -3, 0, 6, 12};
+        }
         double totalRange = METER_CEILING_DB - MIN_DB;
 
         for (double dbValue : labelDbValues) {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
             Label label = new Label((dbValue >= 0 ? "+" : "") + String.format("%.0f", dbValue));
-            if (dbValue == 0) {
+            if (dbValue == 0 || ("English (for mix)".equals(language) && dbValue == -24)) {
                 label.setFont(Font.font("Verdana", FontWeight.BOLD, 12));
             } else {
                 label.setFont(Font.font("Verdana", FontWeight.NORMAL, 12));
@@ -367,9 +389,11 @@ public class LevelMeter {
         innerShadow.setColor(COLOR_BACKGROUND_METER);
         meterBackground.setEffect(innerShadow);
 
+        blueBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_BLUE);
         greenBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_GREEN);
         yellowBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_YELLOW);
         redBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_RED);
+        blueBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_BLUE);
         greenBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_GREEN);
         yellowBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_YELLOW);
         redBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_RED);
@@ -379,20 +403,24 @@ public class LevelMeter {
         DropShadow glow = new DropShadow();
         glow.setRadius(20);
         glow.setColor(COLOR_SHADOW_GLOW);
+        blueBar.setEffect(glow);
         greenBar.setEffect(glow);
         yellowBar.setEffect(glow);
         redBar.setEffect(glow);
 
-        meterPane.getChildren().addAll(meterBackground, greenBackground, yellowBackground, redBackground, greenBar, yellowBar, redBar);
+        meterPane.getChildren().addAll(meterBackground, blueBackground, greenBackground, yellowBackground, redBackground, blueBar, greenBar, yellowBar, redBar);
 
         // Add graduation ticks inside the meter
-        double[] labelDbValues = {-37, -30, -20, -10, 0, 6, 12};
+        double[] labelDbValues = {-37, -30, -20, -10, -3, 0, 6, 12};
+        if ("English (for mix)".equals(language)) {
+            labelDbValues = new double[]{-37, -30, -24, -20, -10, -3, 0, 6, 12};
+        }
         double totalRange = METER_CEILING_DB - MIN_DB;
 
         for (double dbValue : labelDbValues) {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
             Rectangle tick = new Rectangle(METER_WIDTH / 4, 2);
-            if (dbValue == 0) {
+            if (dbValue == 0 || ("English (for mix)".equals(language) && dbValue == -24)) {
                 tick.setFill(COLOR_0DB_TICK);
             } else {
                 tick.setFill(COLOR_SCALE_MARK);
@@ -444,8 +472,13 @@ public class LevelMeter {
                     peakHoldTimer.playFromStart();
                 }
 
-                if (displayDb > RED_THRESHOLD_DB) redPeakTimestamp = now;
-                else if (displayDb > YELLOW_THRESHOLD_DB) yellowPeakTimestamp = now;
+                if (displayDb > redThresholdDb) {
+                    redPeakTimestamp = now;
+                } else if (displayDb > yellowThresholdDb) {
+                    yellowPeakTimestamp = now;
+                } else if (displayDb > greenThresholdDb) {
+                    greenPeakTimestamp = now;
+                }
 
                 updateStatusIndicator(now);
                 drawMeter();
@@ -458,20 +491,29 @@ public class LevelMeter {
         Color glowColor = COLOR_GLOW_OFF;
         if (peakFlashActive) {
             statusColor = COLOR_STATUS_PEAK;
+            glowColor = COLOR_GLOW_PEAK;
         } else if (now - redPeakTimestamp < 1_000_000_000L) {
             statusColor = COLOR_STATUS_PEAK;
+            glowColor = COLOR_GLOW_PEAK;
         } else if (now - yellowPeakTimestamp < 1_000_000_000L) {
             statusColor = COLOR_STATUS_WARN;
+            glowColor = COLOR_GLOW_WARN;
+        } else if (now - greenPeakTimestamp < 1_000_000_000L) {
+            statusColor = COLOR_STATUS_OK;
+            glowColor = COLOR_GLOW_OK;
         } else {
-            if (displayDb > RED_THRESHOLD_DB) {
+            if (displayDb > redThresholdDb) {
                 statusColor = COLOR_STATUS_PEAK;
                 glowColor = COLOR_GLOW_PEAK;
-            } else if (displayDb > YELLOW_THRESHOLD_DB) {
+            } else if (displayDb > yellowThresholdDb) {
                 statusColor = COLOR_STATUS_WARN;
                 glowColor = COLOR_GLOW_WARN;
-            } else {
+            } else if (displayDb > greenThresholdDb) {
                 statusColor = COLOR_STATUS_OK;
                 glowColor = COLOR_GLOW_OK;
+            } else {
+                statusColor = COLOR_STATUS_LOW;
+                glowColor = COLOR_GLOW_LOW;
                 if (displayDb <= MIN_DB) {
                     statusColor = COLOR_STATUS_OFF;
                     glowColor = COLOR_GLOW_OFF;
@@ -486,39 +528,48 @@ public class LevelMeter {
         double totalRange = METER_CEILING_DB - MIN_DB;
         double dbClamped = Math.max(MIN_DB, Math.min(METER_CEILING_DB, displayDb));
 
-        double yellowThresholdY = METER_HEIGHT * (1 - (YELLOW_THRESHOLD_DB - MIN_DB) / totalRange);
-        double redThresholdY = METER_HEIGHT * (1 - (RED_THRESHOLD_DB - MIN_DB) / totalRange);
+        double greenThresholdY = METER_HEIGHT * (1 - (greenThresholdDb - MIN_DB) / totalRange);
+        double yellowThresholdY = METER_HEIGHT * (1 - (yellowThresholdDb - MIN_DB) / totalRange);
+        double redThresholdY = METER_HEIGHT * (1 - (redThresholdDb - MIN_DB) / totalRange);
         double currentLevelY = METER_HEIGHT * (1 - (dbClamped - MIN_DB) / totalRange);
 
+        // Backgrounds
         redBackground.setY(0);
         redBackground.setHeight(redThresholdY);
         yellowBackground.setY(redThresholdY);
         yellowBackground.setHeight(yellowThresholdY - redThresholdY);
         greenBackground.setY(yellowThresholdY);
-        greenBackground.setHeight(METER_HEIGHT - yellowThresholdY);
+        greenBackground.setHeight(greenThresholdY - yellowThresholdY);
+        blueBackground.setY(greenThresholdY);
+        blueBackground.setHeight(METER_HEIGHT - greenThresholdY);
 
-        double greenHeight = (dbClamped > YELLOW_THRESHOLD_DB) ? METER_HEIGHT - yellowThresholdY : METER_HEIGHT - currentLevelY;
-        double yellowHeight = (dbClamped > RED_THRESHOLD_DB) ? yellowThresholdY - redThresholdY : (dbClamped > YELLOW_THRESHOLD_DB ? yellowThresholdY - currentLevelY : 0);
-        double redHeight = (dbClamped > RED_THRESHOLD_DB) ? redThresholdY - currentLevelY : 0;
+        // Bars
+        double redHeight = (dbClamped > redThresholdDb) ? redThresholdY - currentLevelY : 0;
+        double yellowHeight = (dbClamped > yellowThresholdDb) ? (dbClamped > redThresholdDb ? yellowThresholdY - redThresholdY : yellowThresholdY - currentLevelY) : 0;
+        double greenHeight = (dbClamped > greenThresholdDb) ? (dbClamped > yellowThresholdDb ? greenThresholdY - yellowThresholdY : greenThresholdY - currentLevelY) : 0;
+        double blueHeight = (dbClamped > greenThresholdDb) ? METER_HEIGHT - greenThresholdY : METER_HEIGHT - currentLevelY;
 
         if (peakFlashActive) {
             redBar.setY(0);
             redBar.setHeight(METER_HEIGHT);
             greenBar.setHeight(0);
             yellowBar.setHeight(0);
+            blueBar.setHeight(0);
         } else {
-            greenBar.setY(METER_HEIGHT - greenHeight);
+            blueBar.setY(METER_HEIGHT - blueHeight);
+            blueBar.setHeight(blueHeight);
+            greenBar.setY(METER_HEIGHT - blueHeight - greenHeight);
             greenBar.setHeight(greenHeight);
-            yellowBar.setY(METER_HEIGHT - greenHeight - yellowHeight);
+            yellowBar.setY(METER_HEIGHT - blueHeight - greenHeight - yellowHeight);
             yellowBar.setHeight(yellowHeight);
-            redBar.setY(METER_HEIGHT - greenHeight - yellowHeight - redHeight);
+            redBar.setY(METER_HEIGHT - blueHeight - greenHeight - yellowHeight - redHeight);
             redBar.setHeight(redHeight);
         }
 
         if (peakDb > MIN_DB) {
             double peakY = METER_HEIGHT * (1 - (peakDb - MIN_DB) / totalRange);
             peakHoldBar.setY(peakY - 1);
-            peakHoldBar.setFill(peakDb > RED_THRESHOLD_DB ? COLOR_METER_RED : (peakDb > YELLOW_THRESHOLD_DB ? COLOR_METER_YELLOW : COLOR_METER_GREEN));
+            peakHoldBar.setFill(peakDb > redThresholdDb ? COLOR_METER_RED : (peakDb > yellowThresholdDb ? COLOR_METER_YELLOW : (peakDb > greenThresholdDb ? COLOR_METER_GREEN : COLOR_METER_BLUE)));
             peakHoldBar.setVisible(true);
         } else {
             peakHoldBar.setVisible(false);
