@@ -36,7 +36,7 @@ public class LevelMeter {
 
     // Meter Bar Colors
     private static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
-    private static final Color COLOR_METER_YELLOW = Color.YELLOW;
+    private static final Color COLOR_METER_YELLOW = Color.ORANGE;
     private static final Color COLOR_METER_RED = Color.RED;
     private static final Color COLOR_METER_PEAK = Color.rgb(255, 100, 100);
 
@@ -48,14 +48,14 @@ public class LevelMeter {
     // Status Indicator Colors
     private static final Color COLOR_STATUS_INACTIVE = Color.rgb(100, 100, 100);
     private static final Color COLOR_STATUS_OK = Color.LIMEGREEN;
-    private static final Color COLOR_STATUS_WARN = Color.YELLOW;
+    private static final Color COLOR_STATUS_WARN = Color.ORANGE;
     private static final Color COLOR_STATUS_PEAK = Color.RED;
     private static final Color COLOR_STATUS_OFF = Color.GRAY;
     private static final Color COLOR_STATUS_STROKE = Color.rgb(255, 255, 255, 0.3);
 
     // Status Glow Colors
     private static final Color COLOR_GLOW_OK = Color.rgb(50, 205, 50, 0.8);
-    private static final Color COLOR_GLOW_WARN = Color.rgb(255, 255, 0, 0.8);
+    private static final Color COLOR_GLOW_WARN = Color.rgb(255, 165, 0, 0.8);
     private static final Color COLOR_GLOW_PEAK = Color.rgb(255, 0, 0, 0.8);
     private static final Color COLOR_GLOW_OFF = Color.rgb(100, 100, 100, 0.8);
     private static final Color COLOR_SCALE_MARK = Color.rgb(255, 255, 255, 0.8);
@@ -80,10 +80,13 @@ public class LevelMeter {
     private AnimationTimer animationTimer;
     private PauseTransition peakHoldTimer;
 
-    private static final double MAX_DB = 12.0;
+    //<editor-fold desc="Meter Constants">
+    private static final double METER_CEILING_DB = 15.0;
     private static final double MIN_DB = -40.0;
-    private static final double YELLOW_THRESHOLD_DB = -6.0;
-    private static final double RED_THRESHOLD_DB = 6.0;
+    private static final double YELLOW_THRESHOLD_DB = 0.0;
+    private static final double RED_THRESHOLD_DB = 12.0;
+    //</editor-fold>
+
     private static final double METER_HEIGHT = 300;
     private static final double METER_WIDTH = 30;
 
@@ -201,7 +204,7 @@ public class LevelMeter {
 
     private void updateMonitorButtonStyle() {
         monitorButton.setFont(Font.font("System", FontWeight.BOLD, 14)); // Increased size for better icon visibility
-        monitorButton.setText("\uD83C\uDFA7"); // Headphone icon for both states
+        monitorButton.setText("🎧"); // Headphone icon for both states
 
         if (monitoringActive.get()) {
             // Style for active monitoring (red)
@@ -270,10 +273,6 @@ public class LevelMeter {
         return monitoringActive.get();
     }
 
-    public Mixer.Info getMixerInfo() {
-        return mixerInfo;
-    }
-
     private void updateBackgroundStyle(Color color) {
         String gradientStyle = createGradientStyle(color);
         view.setStyle(gradientStyle +
@@ -322,13 +321,17 @@ public class LevelMeter {
         graduationPane.setPrefHeight(METER_HEIGHT);
         graduationPane.setMinWidth(45);
 
-        double[] labelDbValues = {-40, -36, -30, -24, -18, -12, -6, 0, 6, 12};
-        double totalRange = MAX_DB - MIN_DB;
+        double[] labelDbValues = {-37, -30, -20, -10, 0, 6, 12};
+        double totalRange = METER_CEILING_DB - MIN_DB;
 
         for (double dbValue : labelDbValues) {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
             Label label = new Label((dbValue >= 0 ? "+" : "") + String.format("%.0f", dbValue));
-            label.setFont(Font.font("System", FontWeight.BOLD, 12));
+            if (dbValue == 0) {
+                label.setFont(Font.font("Verdana", FontWeight.EXTRA_BOLD, 12));
+            } else {
+                label.setFont(Font.font("Verdana", FontWeight.BOLD, 12));
+            }
             label.setTextFill(COLOR_TEXT_PRIMARY);
             label.setLayoutY(y - 8);
             addTextShadow(label);
@@ -467,8 +470,8 @@ public class LevelMeter {
     }
 
     private void drawMeter() {
-        double totalRange = MAX_DB - MIN_DB;
-        double dbClamped = Math.max(MIN_DB, Math.min(MAX_DB, displayDb));
+        double totalRange = METER_CEILING_DB - MIN_DB;
+        double dbClamped = Math.max(MIN_DB, Math.min(METER_CEILING_DB, displayDb));
 
         double yellowThresholdY = METER_HEIGHT * (1 - (YELLOW_THRESHOLD_DB - MIN_DB) / totalRange);
         double redThresholdY = METER_HEIGHT * (1 - (RED_THRESHOLD_DB - MIN_DB) / totalRange);
@@ -604,12 +607,12 @@ public class LevelMeter {
             return MIN_DB;
         }
 
-        double db = 20 * Math.log10(maxSample) + MAX_DB;
+        double db = 20 * Math.log10(maxSample) + METER_CEILING_DB;
         actualCurrentDb = db;
 
-        if (db >= MAX_DB - 0.5 && !peakFlashActive) {
+        if (db >= METER_CEILING_DB - 0.5 && !peakFlashActive) {
             peakFlashActive = true;
-            Platform.runLater(() -> peakFlashTimer.playFromStart());
+            Platform.runLater(peakFlashTimer::playFromStart);
         }
 
         return Math.max(db, MIN_DB);
@@ -628,5 +631,6 @@ public class LevelMeter {
                 color.getOpacity());
     }
 }
+
 
 
