@@ -36,21 +36,21 @@ public class LevelMeter {
     private static final Color COLOR_SHADOW_GLOW = Color.rgb(255, 255, 255, 0.2);
 
     // Meter Bar Colors
-    private static final Color COLOR_METER_BLUE = Color.rgb(0, 150, 255);
+    private static final Color COLOR_METER_BLUE = Color.web("#C0C0C0");
     private static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
     private static final Color COLOR_METER_YELLOW = Color.ORANGE;
     private static final Color COLOR_METER_RED = Color.RED;
     private static final Color COLOR_METER_PEAK = Color.rgb(255, 100, 100);
 
     // Meter Background Colors
-    private static final Color COLOR_METER_BACKGROUND_BLUE = Color.rgb(0, 50, 100);
+    private static final Color COLOR_METER_BACKGROUND_BLUE = Color.rgb(192, 192, 192, 0.3); // Light grey with transparency
     private static final Color COLOR_METER_BACKGROUND_GREEN = Color.rgb(0, 80, 0);
     private static final Color COLOR_METER_BACKGROUND_YELLOW = Color.rgb(80, 80, 0);
     private static final Color COLOR_METER_BACKGROUND_RED = Color.rgb(80, 0, 0);
 
     // Status Indicator Colors
     private static final Color COLOR_STATUS_INACTIVE = Color.rgb(100, 100, 100);
-    private static final Color COLOR_STATUS_LOW = Color.rgb(0, 150, 255);
+    private static final Color COLOR_STATUS_LOW = Color.web("#C0C0C0");
     private static final Color COLOR_STATUS_OK = Color.LIMEGREEN;
     private static final Color COLOR_STATUS_WARN = Color.ORANGE;
     private static final Color COLOR_STATUS_PEAK = Color.RED;
@@ -58,7 +58,7 @@ public class LevelMeter {
     private static final Color COLOR_STATUS_STROKE = Color.rgb(255, 255, 255, 0.3);
 
     // Status Glow Colors
-    private static final Color COLOR_GLOW_LOW = Color.rgb(0, 150, 255, 0.8);
+    private static final Color COLOR_GLOW_LOW = Color.web("#C0C0C0", 0.8);
     private static final Color COLOR_GLOW_OK = Color.rgb(50, 205, 50, 0.8);
     private static final Color COLOR_GLOW_WARN = Color.rgb(255, 165, 0, 0.8);
     private static final Color COLOR_GLOW_PEAK = Color.rgb(255, 0, 0, 0.8);
@@ -129,11 +129,11 @@ public class LevelMeter {
         this.monitorToggleListener = listener;
 
         if ("English (for mix)".equals(language)) {
-            greenThresholdDb = - 24.0;
-            yellowThresholdDb = -17;
-            redThresholdDb = 12.0;
+            greenThresholdDb = -28.0;
+            yellowThresholdDb = -20.0;
+            redThresholdDb = 20.0;
         } else {
-            greenThresholdDb = -3.0;
+            greenThresholdDb = -9.0;
             yellowThresholdDb = 6.0;
             redThresholdDb = 12.0;
         }
@@ -423,13 +423,16 @@ public class LevelMeter {
 
         for (double dbValue : labelDbValues) {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
-            Rectangle tick = new Rectangle(METER_WIDTH / 4, 2);
+            Rectangle tick;
             if (dbValue == 0 || ("English (for mix)".equals(language) && dbValue == -24)) {
+                tick = new Rectangle(METER_WIDTH, 2); // Full width for 0dB and English mix -24dB
                 tick.setFill(COLOR_0DB_TICK);
+                tick.setLayoutX(0); // Position at the start of the meter
             } else {
+                tick = new Rectangle(METER_WIDTH / 4, 2); // Original width for others
                 tick.setFill(COLOR_SCALE_MARK);
+                tick.setLayoutX(METER_WIDTH - (METER_WIDTH / 4)); // Original position for others
             }
-            tick.setLayoutX(METER_WIDTH - (METER_WIDTH / 4));
             tick.setLayoutY(y - 1);
             meterPane.getChildren().add(tick);
         }
