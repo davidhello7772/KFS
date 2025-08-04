@@ -58,7 +58,8 @@ public class LevelMeter {
     private static final Color COLOR_GLOW_WARN = Color.rgb(255, 165, 0, 0.8);
     private static final Color COLOR_GLOW_PEAK = Color.rgb(255, 0, 0, 0.8);
     private static final Color COLOR_GLOW_OFF = Color.rgb(100, 100, 100, 0.8);
-    private static final Color COLOR_SCALE_MARK = Color.rgb(255, 255, 255, 0.8);
+    private static final Color COLOR_SCALE_MARK = Color.rgb(255, 255, 255, 0.4);
+    private static final Color COLOR_0DB_TICK = Color.rgb(255, 0, 0, 0.7);
     //</editor-fold>
 
     public interface MonitorToggleListener {
@@ -307,7 +308,7 @@ public class LevelMeter {
     }
 
     private HBox createVerticalMeterWithGraduations() {
-        HBox container = new HBox(15);
+        HBox container = new HBox(5);
         container.setAlignment(Pos.CENTER);
         container.setPadding(new Insets(0, 0, 0, 30));
         Pane meterPane = createVerticalMeter();
@@ -319,7 +320,7 @@ public class LevelMeter {
     private VBox createGraduationLabels() {
         Pane graduationPane = new Pane();
         graduationPane.setPrefHeight(METER_HEIGHT);
-        graduationPane.setMinWidth(45);
+        graduationPane.setMinWidth(35);
 
         double[] labelDbValues = {-37, -30, -20, -10, 0, 6, 12};
         double totalRange = METER_CEILING_DB - MIN_DB;
@@ -328,22 +329,15 @@ public class LevelMeter {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
             Label label = new Label((dbValue >= 0 ? "+" : "") + String.format("%.0f", dbValue));
             if (dbValue == 0) {
-                label.setFont(Font.font("Verdana", FontWeight.EXTRA_BOLD, 12));
-            } else {
                 label.setFont(Font.font("Verdana", FontWeight.BOLD, 12));
+            } else {
+                label.setFont(Font.font("Verdana", FontWeight.NORMAL, 12));
             }
             label.setTextFill(COLOR_TEXT_PRIMARY);
             label.setLayoutY(y - 8);
             addTextShadow(label);
 
-            Rectangle scaleMark = new Rectangle(10, 2);
-            scaleMark.setFill(COLOR_SCALE_MARK);
-            scaleMark.setLayoutX(-12);
-            scaleMark.setLayoutY(y - 1);
-            scaleMark.setArcWidth(1);
-            scaleMark.setArcHeight(1);
-
-            graduationPane.getChildren().addAll(scaleMark, label);
+            graduationPane.getChildren().add(label);
         }
 
         VBox wrapper = new VBox(graduationPane);
@@ -389,7 +383,26 @@ public class LevelMeter {
         yellowBar.setEffect(glow);
         redBar.setEffect(glow);
 
-        meterPane.getChildren().addAll(meterBackground, greenBackground, yellowBackground, redBackground, greenBar, yellowBar, redBar, peakHoldBar);
+        meterPane.getChildren().addAll(meterBackground, greenBackground, yellowBackground, redBackground, greenBar, yellowBar, redBar);
+
+        // Add graduation ticks inside the meter
+        double[] labelDbValues = {-37, -30, -20, -10, 0, 6, 12};
+        double totalRange = METER_CEILING_DB - MIN_DB;
+
+        for (double dbValue : labelDbValues) {
+            double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
+            Rectangle tick = new Rectangle(METER_WIDTH / 4, 2);
+            if (dbValue == 0) {
+                tick.setFill(COLOR_0DB_TICK);
+            } else {
+                tick.setFill(COLOR_SCALE_MARK);
+            }
+            tick.setLayoutX(METER_WIDTH - (METER_WIDTH / 4));
+            tick.setLayoutY(y - 1);
+            meterPane.getChildren().add(tick);
+        }
+
+        meterPane.getChildren().add(peakHoldBar);
         return meterPane;
     }
 
@@ -614,7 +627,6 @@ public class LevelMeter {
             peakFlashActive = true;
             Platform.runLater(peakFlashTimer::playFromStart);
         }
-
         return Math.max(db, MIN_DB);
     }
 
