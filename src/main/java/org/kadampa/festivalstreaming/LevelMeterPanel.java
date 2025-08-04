@@ -117,4 +117,8 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
             vuMeter.stopAllMonitoring();
         }
     }
+
+    public Map<String, LevelMeter> getVuMeters() {
+        return vuMeters;
+    }
 }

@@ -109,6 +109,7 @@ public class StreamingGUI extends Application {
     private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputFileAndUrl = new SimpleBooleanProperty();
     private LevelMeterPanel vuMeterPanel;
+    private VolumeMonitor volumeMonitor;
 
     
 
@@ -1172,6 +1173,16 @@ public class StreamingGUI extends Application {
         applySettings();
         applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),isTheOutputAFile.get());
         vuMeterPanel = new LevelMeterPanel(inputAudioSources, inputAudioSourcesChannel, settings.getLanguageColors());
+        volumeMonitor = new VolumeMonitor(vuMeterPanel.getVuMeters());
+
+        // Start/stop VolumeMonitor based on LevelMeterPanel visibility
+        vuMeterPanel.showingProperty().addListener((obs, wasShowing, isShowing) -> {
+            if (isShowing) {
+                volumeMonitor.startMonitoring();
+            } else {
+                volumeMonitor.stopMonitoring();
+            }
+        });
 
     }
 
@@ -1222,6 +1233,9 @@ public class StreamingGUI extends Application {
     private void handleClose() {
         if (vuMeterPanel != null) {
             vuMeterPanel.closeVUMeters();
+        }
+        if (volumeMonitor != null) {
+            volumeMonitor.stopMonitoring();
         }
         stopEncodingThread();
     }

@@ -21,6 +21,7 @@ import javafx.util.Duration;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.Mixer;
+import java.util.LinkedList;
 
 public class LevelMeter {
 
@@ -100,6 +101,9 @@ public class LevelMeter {
     private volatile double currentDb = MIN_DB;
     private volatile double actualCurrentDb = MIN_DB;
     private double actualDisplayDb = MIN_DB;
+
+    private final LinkedList<Double> volumeHistory = new LinkedList<>();
+    private static final int VOLUME_HISTORY_SIZE = 100; // Roughly 10 seconds at 10 updates/sec
 
     private double displayDb = MIN_DB;
     private double peakDb = MIN_DB;
@@ -589,6 +593,29 @@ public class LevelMeter {
         audioInterfaceLabel.setText(text);
     }
 
+    public void setWarningDisplay(boolean showWarning, String message) {
+        Platform.runLater(() -> {
+            if (showWarning) {
+                audioInterfaceLabel.setText(message);
+                // Apply a visual effect, e.g., flashing background or text color
+                // For simplicity, let's change the background color to red temporarily
+                // and make the text flash.
+                view.setStyle(createGradientStyle(COLOR_METER_RED) +
+                    "-fx-background-radius: 16; " +
+                    "-fx-border-color: " + toRgbaString(COLOR_METER_RED.brighter()) + "; " +
+                    "-fx-border-width: 2; " +
+                    "-fx-border-radius: 16;");
+                audioInterfaceLabel.setTextFill(Color.WHITE); // Ensure text is visible
+                // Implement flashing effect if desired, e.g., using a Timeline
+                // For now, just a static red background.
+            } else {
+                updateAudioInterfaceLabel(); // Revert to original label
+                updateBackgroundStyle(originalBackgroundColor); // Revert background
+                audioInterfaceLabel.setTextFill(COLOR_TEXT_SECONDARY); // Revert text color
+            }
+        });
+    }
+
     public void setMixerInfo(Mixer.Info mixerInfo) {
         stop();
         this.mixerInfo = mixerInfo;
@@ -674,11 +701,27 @@ public class LevelMeter {
         double db = 20 * Math.log10(maxSample) + METER_CEILING_DB;
         actualCurrentDb = db;
 
-        if (db >= METER_CEILING_DB - 0.5 && !peakFlashActive) {
-            peakFlashActive = true;
-            Platform.runLater(peakFlashTimer::playFromStart);
+        // Add to history and maintain size
+        volumeHistory.add(actualCurrentDb);
+        if (volumeHistory.size() > VOLUME_HISTORY_SIZE) {
+            volumeHistory.removeFirst();
         }
         return Math.max(db, MIN_DB);
+    }
+
+    public double getAverageActualDb() {
+        if (volumeHistory.isEmpty()) {
+            return MIN_DB; // Or some other default/indicator
+        }
+        double sum = 0;
+        for (Double val : volumeHistory) {
+            sum += val;
+        }
+        return sum / volumeHistory.size();
+    }
+
+    public String getLanguage() {
+        return language;
     }
 
     /**
