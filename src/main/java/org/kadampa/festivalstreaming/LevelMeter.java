@@ -132,7 +132,7 @@ public class LevelMeter {
         if ("English (for mix)".equals(language)) {
             greenThresholdDb = -28.0;
             yellowThresholdDb = -20.0;
-            redThresholdDb = 20.0;
+            redThresholdDb = 12.0;
         } else {
             greenThresholdDb = -9.0;
             yellowThresholdDb = 6.0;
@@ -504,7 +504,7 @@ public class LevelMeter {
 
     private void updateStatusIndicator(long now) {
         Color statusColor;
-        Color glowColor = COLOR_GLOW_OFF;
+        Color glowColor;
         if (peakFlashActive) {
             statusColor = COLOR_STATUS_PEAK;
             glowColor = COLOR_GLOW_PEAK;
@@ -626,13 +626,12 @@ public class LevelMeter {
 
                 // Create modern pill/badge background with gradient
                 Color gradientStart = color.brighter().brighter();
-                Color gradientEnd = color;
 
                 // Apply modern warning badge styling
                 audioInterfaceLabel.setStyle(
                     String.format("-fx-background-color: linear-gradient(to bottom, %s, %s);",
                         toRgbaString(gradientStart),
-                        toRgbaString(gradientEnd)) +
+                        toRgbaString(color)) +
                         "-fx-border-color: " + toRgbaString(color.brighter()) + ";" +
                         "-fx-border-width: 1.5;" +
                         "-fx-effect: dropshadow(gaussian, " + toRgbaString(Color.rgb(0, 0, 0, 0.4)) + ", 4, 0, 0, 2);"
@@ -773,10 +772,6 @@ public class LevelMeter {
             sum += val;
         }
         return sum / volumeHistory.size();
-    }
-
-    public String getLanguage() {
-        return language;
     }
 
     /**
