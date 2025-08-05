@@ -599,7 +599,7 @@ public class LevelMeter {
     public void setWarningDisplay(boolean showWarning, String message) {
         Platform.runLater(() -> {
             if (showWarning) {
-                audioInterfaceLabel.setText(message);
+                audioInterfaceLabel.setText(message.toUpperCase());
                 // Apply a visual effect, e.g., flashing background or text color
                 // For simplicity, let's change the background color to red temporarily
                 // and make the text flash.

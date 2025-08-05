@@ -15,6 +15,7 @@ public class VolumeMonitor {
     private ScheduledExecutorService scheduler;
     private static final double WARNING_THRESHOLD_DB = 10.0; // Hardcoded threshold
     private final Map<String, Long> lowVolumeStartTime = new HashMap<>(); // Tracks when low volume started
+    private final Map<String, Long> highVolumeStartTime = new HashMap<>(); // Tracks when high volume started
 
     // Constants for language names to exclude
     private static final String PRAYERS_LANGUAGE = "Prayers";
@@ -60,14 +61,25 @@ public class VolumeMonitor {
             double translationAverageDb = meter.getAverageActualDb();
             long currentTime = System.currentTimeMillis();
 
-            if (englishMixAverageDb - translationAverageDb > WARNING_THRESHOLD_DB) {
+            if (translationAverageDb - englishMixAverageDb > WARNING_THRESHOLD_DB) {
+                // High volume condition met
+                if (!highVolumeStartTime.containsKey(language)) {
+                    // First time this condition is met, record start time
+                    highVolumeStartTime.put(language, currentTime);
+                }
+
+                // Check if condition has persisted for 6 seconds
+                if (currentTime - highVolumeStartTime.get(language) >= 6_000) { // 6 seconds
+                    meter.setWarningDisplay(true, "NOT MUTED?");
+                }
+            } else if (englishMixAverageDb - translationAverageDb > WARNING_THRESHOLD_DB) {
                 // Low volume condition met
                 if (!lowVolumeStartTime.containsKey(language)) {
                     // First time this condition is met, record start time
                     lowVolumeStartTime.put(language, currentTime);
                 }
 
-                // Check if condition has persisted for 10 seconds
+                // Check if condition has persisted for 6 seconds
                 if (currentTime - lowVolumeStartTime.get(language) >= 6_000) { // 6 seconds
                     meter.setWarningDisplay(true, "LOW VOL!");
                 }
@@ -75,6 +87,10 @@ public class VolumeMonitor {
                 // Volume is okay, clear any active warning and reset timer
                 if (lowVolumeStartTime.containsKey(language)) {
                     lowVolumeStartTime.remove(language);
+                    meter.setWarningDisplay(false, ""); // Clear warning immediately
+                }
+                if (highVolumeStartTime.containsKey(language)) {
+                    highVolumeStartTime.remove(language);
                     meter.setWarningDisplay(false, ""); // Clear warning immediately
                 }
             }
