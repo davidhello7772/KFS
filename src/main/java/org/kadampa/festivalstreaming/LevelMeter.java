@@ -39,8 +39,9 @@ public class LevelMeter {
     private static final Color COLOR_METER_BLUE = Color.web("#C0C0C0");
     private static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
     private static final Color COLOR_METER_YELLOW = Color.ORANGE;
-    private static final Color COLOR_METER_RED = Color.RED;
+    public static final Color COLOR_METER_RED = Color.RED;
     private static final Color COLOR_METER_PEAK = Color.rgb(255, 100, 100);
+    public static final Color COLOR_WARNING_HIGH = Color.rgb(255, 140, 0); // Bright Orange
 
     // Meter Background Colors
     private static final Color COLOR_METER_BACKGROUND_BLUE = Color.rgb(192, 192, 192, 0.3); // Light grey with transparency
@@ -596,25 +597,73 @@ public class LevelMeter {
         audioInterfaceLabel.setText(text);
     }
 
-    public void setWarningDisplay(boolean showWarning, String message) {
+    public void setWarningDisplay(boolean showWarning, String message, Color warningColor) {
         Platform.runLater(() -> {
             if (showWarning) {
-                audioInterfaceLabel.setText(message.toUpperCase());
-                // Apply a visual effect, e.g., flashing background or text color
-                // For simplicity, let's change the background color to red temporarily
-                // and make the text flash.
-                view.setStyle(createGradientStyle(COLOR_METER_RED) +
-                    "-fx-background-radius: 16; " +
-                    "-fx-border-color: " + toRgbaString(COLOR_METER_RED.brighter()) + "; " +
-                    "-fx-border-width: 2; " +
-                    "-fx-border-radius: 16;");
-                audioInterfaceLabel.setTextFill(Color.WHITE); // Ensure text is visible
-                // Implement flashing effect if desired, e.g., using a Timeline
-                // For now, just a static red background.
+                // Create modern warning badge styling
+                String warningMessage = message.toUpperCase();
+                audioInterfaceLabel.setText(warningMessage);
+
+                // Use provided color or default to bright warning red
+                Color color = (warningColor != null) ? warningColor : Color.web("#FF4444");
+
+                // Create modern pill/badge background with gradient
+                Color gradientStart = color.brighter().brighter();
+                Color gradientEnd = color;
+
+                // Apply modern warning badge styling
+                audioInterfaceLabel.setStyle(
+                    String.format("-fx-background-color: linear-gradient(to bottom, %s, %s);",
+                        toRgbaString(gradientStart),
+                        toRgbaString(gradientEnd)) +
+                        "-fx-border-color: " + toRgbaString(color.brighter()) + ";" +
+                        "-fx-border-width: 1.5;" +
+                        "-fx-effect: dropshadow(gaussian, " + toRgbaString(Color.rgb(0, 0, 0, 0.4)) + ", 4, 0, 0, 2);"
+                );
+
+                // Make text white and bold for maximum visibility
+                audioInterfaceLabel.setTextFill(Color.WHITE);
+                audioInterfaceLabel.setFont(Font.font("System", FontWeight.BOLD, 13));
+
+                // Optional: Add subtle pulsing animation for critical warnings
+
+                    // Create a subtle pulsing effect for NOT MUTED warnings using FadeTransition
+                    javafx.animation.FadeTransition pulseAnimation = new javafx.animation.FadeTransition(Duration.seconds(0.8), audioInterfaceLabel);
+                    pulseAnimation.setFromValue(1.0);
+                    pulseAnimation.setToValue(0.6);
+                    pulseAnimation.setCycleCount(javafx.animation.FadeTransition.INDEFINITE);
+                    pulseAnimation.setAutoReverse(true);
+                    pulseAnimation.play();
+
+                    // Store animation reference to stop it later
+                    audioInterfaceLabel.getProperties().put("warningAnimation", pulseAnimation);
+
+                // Keep the overall card styling unchanged for the warning state
+                view.setStyle(createGradientStyle(color) +
+                    "-fx-border-color: " + toRgbaString(color.brighter()) + "; " +
+                    "-fx-border-width: 2; ");
+
             } else {
+                // Stop any running animations
+                Object animation = audioInterfaceLabel.getProperties().get("warningAnimation");
+                if (animation instanceof javafx.animation.FadeTransition) {
+                    javafx.animation.FadeTransition fadeTransition = (javafx.animation.FadeTransition) animation;
+                    fadeTransition.stop();
+                    fadeTransition.jumpTo(Duration.ZERO); // Reset to beginning
+                    audioInterfaceLabel.getProperties().remove("warningAnimation");
+                }
+
+                // Reset opacity
+                audioInterfaceLabel.setOpacity(1.0);
+
+                // Revert to original label and styling
                 updateAudioInterfaceLabel(); // Revert to original label
                 updateBackgroundStyle(originalBackgroundColor); // Revert background
+
+                // Reset label styling to original
+                audioInterfaceLabel.setStyle(""); // Clear custom styling
                 audioInterfaceLabel.setTextFill(COLOR_TEXT_SECONDARY); // Revert text color
+                audioInterfaceLabel.setFont(Font.font("System", FontWeight.NORMAL, 13)); // Revert font
             }
         });
     }

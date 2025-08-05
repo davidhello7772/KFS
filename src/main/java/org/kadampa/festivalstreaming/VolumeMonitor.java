@@ -1,8 +1,5 @@
 package org.kadampa.festivalstreaming;
 
-import javafx.application.Platform;
-import javafx.scene.paint.Color;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -17,10 +14,6 @@ public class VolumeMonitor {
     private final Map<String, Long> lowVolumeStartTime = new HashMap<>(); // Tracks when low volume started
     private final Map<String, Long> highVolumeStartTime = new HashMap<>(); // Tracks when high volume started
 
-    // Constants for language names to exclude
-    private static final String PRAYERS_LANGUAGE = "Prayers";
-    private static final String ENGLISH_FOR_MIX_LANGUAGE = "English (for mix)";
-    private static final String ENGLISH_LANGUAGE = "English"; // The reference language
 
     public VolumeMonitor(Map<String, LevelMeter> vuMeters) {
         this.vuMeters = vuMeters;
@@ -41,7 +34,7 @@ public class VolumeMonitor {
     }
 
     private void checkTranslationVolumes() {
-        LevelMeter englishMixMeter = vuMeters.get(ENGLISH_LANGUAGE); // Assuming "English" is the reference
+        LevelMeter englishMixMeter = vuMeters.get(Settings.ENGLISH_LANGUAGE); // Assuming "English" is the reference
         if (englishMixMeter == null) {
             // English mix meter not found, cannot perform comparison
             return;
@@ -54,7 +47,7 @@ public class VolumeMonitor {
             LevelMeter meter = entry.getValue();
 
             // Skip Prayers, English (for mix), and the English reference itself
-            if (PRAYERS_LANGUAGE.equals(language) || ENGLISH_FOR_MIX_LANGUAGE.equals(language) || ENGLISH_LANGUAGE.equals(language)) {
+            if (Settings.PRAYERS_LANGUAGE.equals(language) || Settings.ENGLISH_FOR_MIX_LANGUAGE.equals(language) || Settings.ENGLISH_LANGUAGE.equals(language)) {
                 continue;
             }
 
@@ -70,9 +63,9 @@ public class VolumeMonitor {
 
                 // Check if condition has persisted for 6 seconds
                 if (currentTime - highVolumeStartTime.get(language) >= 6_000) { // 6 seconds
-                    meter.setWarningDisplay(true, "NOT MUTED?");
+                    meter.setWarningDisplay(true, "NOT MUTED?", LevelMeter.COLOR_WARNING_HIGH);
                 }
-            } else if (englishMixAverageDb - translationAverageDb > WARNING_THRESHOLD_DB) {
+            } else if (englishMixAverageDb - translationAverageDb > WARNING_THRESHOLD_DB && englishMixAverageDb >= -40.0) {
                 // Low volume condition met
                 if (!lowVolumeStartTime.containsKey(language)) {
                     // First time this condition is met, record start time
@@ -81,17 +74,17 @@ public class VolumeMonitor {
 
                 // Check if condition has persisted for 6 seconds
                 if (currentTime - lowVolumeStartTime.get(language) >= 6_000) { // 6 seconds
-                    meter.setWarningDisplay(true, "LOW VOL!");
+                    meter.setWarningDisplay(true, "LOW VOL!", LevelMeter.COLOR_METER_RED);
                 }
             } else {
                 // Volume is okay, clear any active warning and reset timer
                 if (lowVolumeStartTime.containsKey(language)) {
                     lowVolumeStartTime.remove(language);
-                    meter.setWarningDisplay(false, ""); // Clear warning immediately
+                    meter.setWarningDisplay(false, "", null); // Clear warning immediately
                 }
                 if (highVolumeStartTime.containsKey(language)) {
                     highVolumeStartTime.remove(language);
-                    meter.setWarningDisplay(false, ""); // Clear warning immediately
+                    meter.setWarningDisplay(false, "", null); // Clear warning immediately
                 }
             }
         }

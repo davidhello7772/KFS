@@ -21,10 +21,13 @@ public class Settings implements Serializable {
         }
     }
 
+    public static final String PRAYERS_LANGUAGE = "Prayers";
+    public static final String ENGLISH_FOR_MIX_LANGUAGE = "English (for mix)";
+    public static final String ENGLISH_LANGUAGE = "English"; // The reference language
     public static final Language[] LANGUAGES = {
-            new Language("Prayers"),
-            new Language("English (for mix)"),
-            new Language("English", "English", "eng"),
+            new Language(PRAYERS_LANGUAGE),
+            new Language(ENGLISH_FOR_MIX_LANGUAGE),
+            new Language(ENGLISH_LANGUAGE, ENGLISH_LANGUAGE, "eng"),
             new Language("Spanish", "Español", "spa"),
             new Language("French", "Français", "fra"),
             new Language("Portuguese", "Português", "por"),
