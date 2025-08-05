@@ -480,6 +480,14 @@ public class LevelMeter {
                     peakHoldTimer.playFromStart();
                 }
 
+                // Trigger peak flash if level is close to ceiling
+                if (displayDb >= METER_CEILING_DB - 0.5) {
+                    if (!peakFlashActive) {
+                        peakFlashActive = true;
+                        peakFlashTimer.playFromStart();
+                    }
+                }
+
                 if (displayDb > redThresholdDb) {
                     redPeakTimestamp = now;
                 } else if (displayDb > yellowThresholdDb) {
@@ -599,6 +607,15 @@ public class LevelMeter {
 
     public void setWarningDisplay(boolean showWarning, String message, Color warningColor) {
         Platform.runLater(() -> {
+            // First, stop any existing animations on the label to prevent conflicts
+            Object existingAnimation = audioInterfaceLabel.getProperties().get("warningAnimation");
+            if (existingAnimation instanceof javafx.animation.FadeTransition) {
+                ((javafx.animation.FadeTransition) existingAnimation).stop();
+                audioInterfaceLabel.getProperties().remove("warningAnimation");
+            }
+            // Reset opacity and other properties to a clean state
+            audioInterfaceLabel.setOpacity(1.0);
+
             if (showWarning) {
                 // Create modern warning badge styling
                 String warningMessage = message.toUpperCase();
@@ -625,37 +642,23 @@ public class LevelMeter {
                 audioInterfaceLabel.setTextFill(Color.WHITE);
                 audioInterfaceLabel.setFont(Font.font("System", FontWeight.BOLD, 13));
 
-                // Optional: Add subtle pulsing animation for critical warnings
+                // Create a subtle pulsing effect for the new warning
+                javafx.animation.FadeTransition pulseAnimation = new javafx.animation.FadeTransition(Duration.seconds(0.8), audioInterfaceLabel);
+                pulseAnimation.setFromValue(1.0);
+                pulseAnimation.setToValue(0.6);
+                pulseAnimation.setCycleCount(javafx.animation.FadeTransition.INDEFINITE);
+                pulseAnimation.setAutoReverse(true);
+                pulseAnimation.play();
 
-                    // Create a subtle pulsing effect for NOT MUTED warnings using FadeTransition
-                    javafx.animation.FadeTransition pulseAnimation = new javafx.animation.FadeTransition(Duration.seconds(0.8), audioInterfaceLabel);
-                    pulseAnimation.setFromValue(1.0);
-                    pulseAnimation.setToValue(0.6);
-                    pulseAnimation.setCycleCount(javafx.animation.FadeTransition.INDEFINITE);
-                    pulseAnimation.setAutoReverse(true);
-                    pulseAnimation.play();
+                // Store the new animation reference
+                audioInterfaceLabel.getProperties().put("warningAnimation", pulseAnimation);
 
-                    // Store animation reference to stop it later
-                    audioInterfaceLabel.getProperties().put("warningAnimation", pulseAnimation);
-
-                // Keep the overall card styling unchanged for the warning state
+                // Update the overall card styling for the warning state
                 view.setStyle(createGradientStyle(color) +
                     "-fx-border-color: " + toRgbaString(color.brighter()) + "; " +
                     "-fx-border-width: 2; ");
 
             } else {
-                // Stop any running animations
-                Object animation = audioInterfaceLabel.getProperties().get("warningAnimation");
-                if (animation instanceof javafx.animation.FadeTransition) {
-                    javafx.animation.FadeTransition fadeTransition = (javafx.animation.FadeTransition) animation;
-                    fadeTransition.stop();
-                    fadeTransition.jumpTo(Duration.ZERO); // Reset to beginning
-                    audioInterfaceLabel.getProperties().remove("warningAnimation");
-                }
-
-                // Reset opacity
-                audioInterfaceLabel.setOpacity(1.0);
-
                 // Revert to original label and styling
                 updateAudioInterfaceLabel(); // Revert to original label
                 updateBackgroundStyle(originalBackgroundColor); // Revert background

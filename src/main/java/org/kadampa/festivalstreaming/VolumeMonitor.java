@@ -63,7 +63,7 @@ public class VolumeMonitor {
 
                 // Check if condition has persisted for 6 seconds
                 if (currentTime - highVolumeStartTime.get(language) >= 6_000) { // 6 seconds
-                    meter.setWarningDisplay(true, "NOT MUTED?", LevelMeter.COLOR_WARNING_HIGH);
+                    meter.setWarningDisplay(true, "HIGH VOLUME!", LevelMeter.COLOR_WARNING_HIGH);
                 }
             } else if (englishMixAverageDb - translationAverageDb > WARNING_THRESHOLD_DB && englishMixAverageDb >= -40.0) {
                 // Low volume condition met
@@ -74,7 +74,7 @@ public class VolumeMonitor {
 
                 // Check if condition has persisted for 6 seconds
                 if (currentTime - lowVolumeStartTime.get(language) >= 6_000) { // 6 seconds
-                    meter.setWarningDisplay(true, "LOW VOL!", LevelMeter.COLOR_METER_RED);
+                    meter.setWarningDisplay(true, "LOW VOLUME!", LevelMeter.COLOR_METER_RED);
                 }
             } else {
                 // Volume is okay, clear any active warning and reset timer
