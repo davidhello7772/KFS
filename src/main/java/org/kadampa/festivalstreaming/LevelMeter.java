@@ -21,6 +21,7 @@ import javafx.util.Duration;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.Mixer;
+import java.util.ArrayList;
 import java.util.LinkedList;
 
 public class LevelMeter {
@@ -33,7 +34,6 @@ public class LevelMeter {
     private static final Color COLOR_BACKGROUND_DARK_TRANSPARENT = Color.rgb(0, 0, 0, 0.2);
     private static final Color COLOR_BACKGROUND_METER = Color.rgb(0, 0, 0, 0.3);
     private static final Color COLOR_SHADOW = Color.rgb(0, 0, 0, 0.4);
-    private static final Color COLOR_SHADOW_GLOW = Color.rgb(255, 255, 255, 0.2);
 
     // Meter Bar Colors
     private static final Color COLOR_METER_BLUE = Color.web("#C0C0C0");
@@ -69,6 +69,7 @@ public class LevelMeter {
     private static final Color COLOR_0DB_TICK_GLOW = Color.rgb(255, 255, 0, 0.4);
     //</editor-fold>
 
+
     public interface MonitorToggleListener {
         void onMonitorRequest(LevelMeter source);
     }
@@ -84,13 +85,12 @@ public class LevelMeter {
     private final String language;
     private AudioCaptureManager.AudioDataListener audioDataListener;
 
-    private Rectangle blueBar, greenBar, yellowBar, redBar, peakHoldBar;
-    private Rectangle blueBackground, greenBackground, yellowBackground, redBackground;
+    private Rectangle peakHoldBar;
     private AnimationTimer animationTimer;
     private PauseTransition peakHoldTimer;
 
     //<editor-fold desc="Meter Constants">
-    private static final double METER_CEILING_DB = 15.0;
+    private static final double METER_CEILING_DB = 12.0;
     private static final double MIN_DB = -40.0;
     private final double greenThresholdDb;
     private final double yellowThresholdDb;
@@ -123,6 +123,11 @@ public class LevelMeter {
     private Button monitorButton;
     private final BooleanProperty monitoringActive = new SimpleBooleanProperty(false);
 
+    private ArrayList<Rectangle> meterBoxes;
+    private static final int NUM_BOXES = 40; // Total number of discrete boxes
+    private static final double BOX_HEIGHT = (METER_HEIGHT - (NUM_BOXES - 1) * 2) / NUM_BOXES; // 2px gap between boxes
+    private static final double BOX_GAP = 2.0; // Gap between boxes
+
     public LevelMeter(String language, Mixer.Info mixerInfo, String channel, Color backgroundColor, MonitorToggleListener listener) {
         this.language = language;
         this.mixerInfo = mixerInfo;
@@ -133,12 +138,11 @@ public class LevelMeter {
         if ("English (for mix)".equals(language)) {
             greenThresholdDb = -28.0;
             yellowThresholdDb = -20.0;
-            redThresholdDb = 12.0;
         } else {
             greenThresholdDb = -9.0;
             yellowThresholdDb = 6.0;
-            redThresholdDb = 12.0;
         }
+        redThresholdDb = 9.0;
 
         this.view = new VBox();
         this.view.setAlignment(Pos.CENTER);
@@ -347,9 +351,9 @@ public class LevelMeter {
         graduationPane.setPrefHeight(METER_HEIGHT);
         graduationPane.setMinWidth(35);
 
-        double[] labelDbValues = {-37, -30, -20, -10, -3, 0, 6, 12};
+        double[] labelDbValues = {-37, -30, -20, -10, -3, 0, 6, 9};
         if ("English (for mix)".equals(language)) {
-            labelDbValues = new double[]{-37, -30, -24, -20, -10, -3, 0, 6, 12};
+            labelDbValues = new double[]{-37, -30, -24, -20, -10, -3, 0, 6, 9};
         }
         double totalRange = METER_CEILING_DB - MIN_DB;
 
@@ -373,6 +377,7 @@ public class LevelMeter {
         return wrapper;
     }
 
+
     private Pane createVerticalMeter() {
         Pane meterPane = new Pane();
         meterPane.setPrefSize(METER_WIDTH, METER_HEIGHT);
@@ -395,41 +400,59 @@ public class LevelMeter {
         innerShadow.setColor(COLOR_BACKGROUND_METER);
         meterBackground.setEffect(innerShadow);
 
-        blueBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_BLUE);
-        greenBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_GREEN);
-        yellowBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_YELLOW);
-        redBackground = new Rectangle(METER_WIDTH, 0, COLOR_METER_BACKGROUND_RED);
-        blueBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_BLUE);
-        greenBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_GREEN);
-        yellowBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_YELLOW);
-        redBar = new Rectangle(METER_WIDTH, 0, COLOR_METER_RED);
-        peakHoldBar = new Rectangle(METER_WIDTH, 2, COLOR_METER_PEAK);
-        peakHoldBar.setVisible(false);
+        meterPane.getChildren().add(meterBackground);
 
-        DropShadow glow = new DropShadow();
-        glow.setRadius(20);
-        glow.setColor(COLOR_SHADOW_GLOW);
-        blueBar.setEffect(glow);
-        greenBar.setEffect(glow);
-        yellowBar.setEffect(glow);
-        redBar.setEffect(glow);
+        // Initialize the discrete boxes
+        meterBoxes = new ArrayList<>();
 
-        meterPane.getChildren().addAll(meterBackground, blueBackground, greenBackground, yellowBackground, redBackground, blueBar, greenBar, yellowBar, redBar);
+        for (int i = 0; i < NUM_BOXES; i++) {
+            // Calculate position from bottom to top
+            double y = METER_HEIGHT - (i + 1) * (BOX_HEIGHT + BOX_GAP) + BOX_GAP;
+
+            // Background box (always visible, darker)
+            Rectangle bgBox = new Rectangle(METER_WIDTH - 4, BOX_HEIGHT);
+            bgBox.setX(2);
+            bgBox.setY(y);
+            bgBox.setArcWidth(4);
+            bgBox.setArcHeight(4);
+            bgBox.setFill(getBackgroundColorForBox(i));
+            bgBox.setOpacity(0.3);
+            meterPane.getChildren().add(bgBox);
+
+            // Active box (lit up when signal reaches this level)
+            Rectangle activeBox = new Rectangle(METER_WIDTH - 4, BOX_HEIGHT);
+            activeBox.setX(2);
+            activeBox.setY(y);
+            activeBox.setArcWidth(4);
+            activeBox.setArcHeight(4);
+            activeBox.setFill(getColorForBox(i));
+            activeBox.setVisible(false);
+
+            // Add glow effect to active boxes
+            DropShadow glow = new DropShadow();
+            glow.setRadius(8);
+            glow.setColor(getColorForBox(i));
+            glow.setSpread(0.3);
+            activeBox.setEffect(glow);
+
+            meterBoxes.add(activeBox);
+            meterPane.getChildren().add(activeBox);
+        }
 
         // Add graduation ticks inside the meter
-        double[] labelDbValues = {-37, -30, -20, -10, -3, 0, 6, 12};
+        double[] labelDbValues = {-37, -30, -20, -10, -3, 0, 3, 6, 9}; // Changed max from 12 to 9
         if ("English (for mix)".equals(language)) {
-            labelDbValues = new double[]{-37, -30, -24, -20, -10, -3, 0, 6, 12};
+            labelDbValues = new double[]{-37, -30, -24, -20, -10, -3, 0, 3, 6, 9}; // Keep -24dB for English mix
         }
         double totalRange = METER_CEILING_DB - MIN_DB;
 
         for (double dbValue : labelDbValues) {
             double y = METER_HEIGHT * (1 - (dbValue - MIN_DB) / totalRange);
             Rectangle tick;
-            if (dbValue == 0 || ("English (for mix)".equals(language) && dbValue == -24)) {
+            if (dbValue == 0 || ("English (for mix)".equals(language) && dbValue == -24)) { // Keep -24dB for English mix
                 tick = new Rectangle(METER_WIDTH, 2); // Full width for 0dB and English mix -24dB
                 tick.setFill(COLOR_0DB_TICK);
-                tick.setLayoutX(0); // Position at the start of the meter
+                tick.setLayoutX(0);
 
                 // Add a glow effect to the 0dB tick
                 DropShadow tickGlow = new DropShadow();
@@ -438,17 +461,143 @@ public class LevelMeter {
                 tickGlow.setSpread(0.5);
                 tick.setEffect(tickGlow);
             } else {
-                tick = new Rectangle(METER_WIDTH / 4, 2); // Original width for others
+                tick = new Rectangle(METER_WIDTH / 4, 2);
                 tick.setFill(COLOR_SCALE_MARK);
-                tick.setLayoutX(METER_WIDTH - (METER_WIDTH / 4)); // Original position for others
+                tick.setLayoutX(METER_WIDTH - (METER_WIDTH / 4));
             }
             tick.setLayoutY(y - 1);
             meterPane.getChildren().add(tick);
         }
 
+        // Add peak hold indicator (single box that moves)
+        peakHoldBar = new Rectangle(METER_WIDTH - 4, BOX_HEIGHT);
+        peakHoldBar.setX(2);
+        peakHoldBar.setArcWidth(4);
+        peakHoldBar.setArcHeight(4);
+        peakHoldBar.setFill(COLOR_METER_PEAK);
+        peakHoldBar.setVisible(false);
+
+        // Enhanced glow for peak hold
+        DropShadow peakGlow = new DropShadow();
+        peakGlow.setRadius(12);
+        peakGlow.setColor(COLOR_METER_PEAK);
+        peakGlow.setSpread(0.5);
+        peakHoldBar.setEffect(peakGlow);
+
         meterPane.getChildren().add(peakHoldBar);
+
         return meterPane;
     }
+
+    // Helper method to determine color for each box based on its position
+    private Color getColorForBox(int boxIndex) {
+        double totalRange = METER_CEILING_DB - MIN_DB;
+        double boxDbValue = MIN_DB + (boxIndex / (double)(NUM_BOXES - 1)) * totalRange;
+
+        if (boxDbValue > redThresholdDb) {
+            return COLOR_METER_RED;
+        } else if (boxDbValue > yellowThresholdDb) {
+            return COLOR_METER_YELLOW;
+        } else if (boxDbValue > greenThresholdDb) {
+            return COLOR_METER_GREEN;
+        } else {
+            return COLOR_METER_BLUE;
+        }
+    }
+
+    // Helper method to determine background color for each box
+    private Color getBackgroundColorForBox(int boxIndex) {
+        double totalRange = METER_CEILING_DB - MIN_DB;
+        double boxDbValue = MIN_DB + (boxIndex / (double)(NUM_BOXES - 1)) * totalRange;
+
+        if (boxDbValue > redThresholdDb) {
+            return COLOR_METER_BACKGROUND_RED;
+        } else if (boxDbValue > yellowThresholdDb) {
+            return COLOR_METER_BACKGROUND_YELLOW;
+        } else if (boxDbValue > greenThresholdDb) {
+            return COLOR_METER_BACKGROUND_GREEN;
+        } else {
+            return COLOR_METER_BACKGROUND_BLUE;
+        }
+    }
+
+    // Replace the drawMeter() method with this implementation:
+    private void drawMeter() {
+        double totalRange = METER_CEILING_DB - MIN_DB;
+        double dbClamped = Math.max(MIN_DB, Math.min(METER_CEILING_DB, displayDb));
+
+        // Calculate which boxes should be lit up
+        int activeBoxes = 0;
+        if (dbClamped > MIN_DB) {
+            double normalizedLevel = (dbClamped - MIN_DB) / totalRange;
+            activeBoxes = (int) Math.round(normalizedLevel * NUM_BOXES);
+            activeBoxes = Math.max(0, Math.min(NUM_BOXES, activeBoxes));
+        }
+
+        // Handle peak flash effect
+        if (peakFlashActive) {
+            // Light up all boxes in red during peak flash
+            for (int i = 0; i < NUM_BOXES; i++) {
+                Rectangle box = meterBoxes.get(i);
+                box.setFill(COLOR_METER_RED);
+                box.setVisible(true);
+
+                // Enhanced glow during peak flash
+                DropShadow flashGlow = new DropShadow();
+                flashGlow.setRadius(15);
+                flashGlow.setColor(COLOR_METER_RED);
+                flashGlow.setSpread(0.8);
+                box.setEffect(flashGlow);
+            }
+        } else {
+            // Normal operation - light up boxes based on level
+            for (int i = 0; i < NUM_BOXES; i++) {
+                Rectangle box = meterBoxes.get(i);
+                if (i < activeBoxes) {
+                    box.setFill(getColorForBox(i));
+                    box.setVisible(true);
+
+                    // Normal glow effect
+                    DropShadow glow = new DropShadow();
+                    glow.setRadius(8);
+                    glow.setColor(getColorForBox(i));
+                    glow.setSpread(0.3);
+                    box.setEffect(glow);
+                } else {
+                    box.setVisible(false);
+                }
+            }
+        }
+
+        // Handle peak hold indicator
+        if (peakDb > MIN_DB) {
+            double peakNormalized = (peakDb - MIN_DB) / totalRange;
+            int peakBoxIndex = (int) Math.round(peakNormalized * NUM_BOXES) - 1;
+            peakBoxIndex = Math.max(0, Math.min(NUM_BOXES - 1, peakBoxIndex));
+
+            double peakY = METER_HEIGHT - (peakBoxIndex + 1) * (BOX_HEIGHT + BOX_GAP) + BOX_GAP;
+            peakHoldBar.setY(peakY);
+
+            // Set peak hold color based on level
+            Color peakColor = getColorForBox(peakBoxIndex);
+            peakHoldBar.setFill(peakColor);
+
+            // Enhanced glow for peak hold
+            DropShadow peakGlow = new DropShadow();
+            peakGlow.setRadius(12);
+            peakGlow.setColor(peakColor);
+            peakGlow.setSpread(0.5);
+            peakHoldBar.setEffect(peakGlow);
+
+            peakHoldBar.setVisible(true);
+        } else {
+            peakHoldBar.setVisible(false);
+        }
+
+        // Update the dB label
+        dbLabel.setText(String.format("%.1f dB", actualDisplayDb));
+    }
+
 
     private void setupAnimation() {
         peakHoldTimer = new PauseTransition(Duration.seconds(1.5));
@@ -489,7 +638,7 @@ public class LevelMeter {
                 }
 
                 // Trigger peak flash if level is close to ceiling
-                if (displayDb >= METER_CEILING_DB - 0.5) {
+                if (displayDb >= METER_CEILING_DB - 0.1) {
                     if (!peakFlashActive) {
                         peakFlashActive = true;
                         peakFlashTimer.playFromStart();
@@ -546,60 +695,6 @@ public class LevelMeter {
         }
         statusIndicator.setFill(statusColor);
         statusGlow.setColor(glowColor);
-    }
-
-    private void drawMeter() {
-        double totalRange = METER_CEILING_DB - MIN_DB;
-        double dbClamped = Math.max(MIN_DB, Math.min(METER_CEILING_DB, displayDb));
-
-        double greenThresholdY = METER_HEIGHT * (1 - (greenThresholdDb - MIN_DB) / totalRange);
-        double yellowThresholdY = METER_HEIGHT * (1 - (yellowThresholdDb - MIN_DB) / totalRange);
-        double redThresholdY = METER_HEIGHT * (1 - (redThresholdDb - MIN_DB) / totalRange);
-        double currentLevelY = METER_HEIGHT * (1 - (dbClamped - MIN_DB) / totalRange);
-
-        // Backgrounds
-        redBackground.setY(0);
-        redBackground.setHeight(redThresholdY);
-        yellowBackground.setY(redThresholdY);
-        yellowBackground.setHeight(yellowThresholdY - redThresholdY);
-        greenBackground.setY(yellowThresholdY);
-        greenBackground.setHeight(greenThresholdY - yellowThresholdY);
-        blueBackground.setY(greenThresholdY);
-        blueBackground.setHeight(METER_HEIGHT - greenThresholdY);
-
-        // Bars
-        double redHeight = (dbClamped > redThresholdDb) ? redThresholdY - currentLevelY : 0;
-        double yellowHeight = (dbClamped > yellowThresholdDb) ? (dbClamped > redThresholdDb ? yellowThresholdY - redThresholdY : yellowThresholdY - currentLevelY) : 0;
-        double greenHeight = (dbClamped > greenThresholdDb) ? (dbClamped > yellowThresholdDb ? greenThresholdY - yellowThresholdY : greenThresholdY - currentLevelY) : 0;
-        double blueHeight = (dbClamped > greenThresholdDb) ? METER_HEIGHT - greenThresholdY : METER_HEIGHT - currentLevelY;
-
-        if (peakFlashActive) {
-            redBar.setY(0);
-            redBar.setHeight(METER_HEIGHT);
-            greenBar.setHeight(0);
-            yellowBar.setHeight(0);
-            blueBar.setHeight(0);
-        } else {
-            blueBar.setY(METER_HEIGHT - blueHeight);
-            blueBar.setHeight(blueHeight);
-            greenBar.setY(METER_HEIGHT - blueHeight - greenHeight);
-            greenBar.setHeight(greenHeight);
-            yellowBar.setY(METER_HEIGHT - blueHeight - greenHeight - yellowHeight);
-            yellowBar.setHeight(yellowHeight);
-            redBar.setY(METER_HEIGHT - blueHeight - greenHeight - yellowHeight - redHeight);
-            redBar.setHeight(redHeight);
-        }
-
-        if (peakDb > MIN_DB) {
-            double peakY = METER_HEIGHT * (1 - (peakDb - MIN_DB) / totalRange);
-            peakHoldBar.setY(peakY - 1);
-            peakHoldBar.setFill(peakDb > redThresholdDb ? COLOR_METER_RED : (peakDb > yellowThresholdDb ? COLOR_METER_YELLOW : (peakDb > greenThresholdDb ? COLOR_METER_GREEN : COLOR_METER_BLUE)));
-            peakHoldBar.setVisible(true);
-        } else {
-            peakHoldBar.setVisible(false);
-        }
-
-        dbLabel.setText(String.format("%.1f dB", actualDisplayDb));
     }
 
     public VBox getView() {
