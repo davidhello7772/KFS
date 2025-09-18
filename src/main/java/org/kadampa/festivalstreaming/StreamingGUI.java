@@ -32,6 +32,8 @@ import javafx.scene.text.TextFlow;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Line;
@@ -81,7 +83,6 @@ public class StreamingGUI extends Application {
     private ScrollPane consoleOutputScrollPane;
     private final SVGPath stopPath = new SVGPath();
     private final TextArea textAreaInfo = new TextArea();
-    private final TextArea systemInfoTextArea = new TextArea();
     private static final int WINDOW_WIDTH = 900;
     private static final int WINDOW_HEIGHT = 950;
     private static final double TOOLTIP_DELAY = 0.2;
@@ -129,6 +130,7 @@ public class StreamingGUI extends Application {
     private int firstOpeningDeviceStartupTime = 0;
     private int secondOpeningDeviceStartupTime = 0;
     private boolean playingError;
+    private static final Logger logger = LoggerFactory.getLogger(StreamingGUI.class);
 
     public StreamingGUI() {
         int MAX_NUMBER_OF_LANGUAGES = 12;
@@ -1478,7 +1480,7 @@ public class StreamingGUI extends Application {
                 protected Void call() {
                     if (!playingError) {
                         playingError = true;
-                        String beepSound = getClass().getResource("/error.wav").toString();
+                        String beepSound = Objects.requireNonNull(getClass().getResource("/error.wav")).toString();
                         Media media = new Media(beepSound);
                         MediaPlayer mediaPlayer = new MediaPlayer(media);
                         CountDownLatch latch = new CountDownLatch(1);
@@ -1492,7 +1494,7 @@ public class StreamingGUI extends Application {
                         try {
                             latch.await();  // Wait for the media to finish
                         } catch (InterruptedException e) {
-                            e.printStackTrace();
+                            logger.error("An error occurred", e);
                         }
                     }
                     return null;

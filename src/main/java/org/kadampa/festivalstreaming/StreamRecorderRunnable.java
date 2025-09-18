@@ -4,6 +4,9 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -41,6 +44,7 @@ public class StreamRecorderRunnable implements Runnable {
     private ProcessMonitor monitor;
     private final BooleanProperty isAliveProperty = new SimpleBooleanProperty(); // Create the property
     private int videoPid;
+    private static final Logger logger = LoggerFactory.getLogger(StreamRecorderRunnable.class);
 
     public StreamRecorderRunnable(StreamingGUI streamingGUI) {
         appContext = streamingGUI;
@@ -62,7 +66,7 @@ public class StreamRecorderRunnable implements Runnable {
             if (appContext.getSettings().isDevelopmentMode()) {
                 throw new RuntimeException(e);
             } else {
-                e.printStackTrace();
+                logger.error("An error occurred", e);
                 if(monitor!=null) monitor.stopMonitoring();
                 stop();
             }
@@ -212,9 +216,7 @@ public class StreamRecorderRunnable implements Runnable {
                 }
                 //For the other language, the noiseReduction value is the number of time we apply the filter
                 //We use the sh model that is quite a strong filter
-                for(int l=0;l<noiseReductionValues.get(i - 1);l++) {
-                    filterCommand.append(",arnndn=model='/rnmodel/sh.rnnn'");
-                }
+                filterCommand.append(",arnndn=model='/rnmodel/sh.rnnn'".repeat(Math.max(0, noiseReductionValues.get(i - 1))));
                 filterCommand.append("[outfiltered").append(i).append("];");
                 filterCommand.append("[prayers").append(i).append("][englishToBeMixed").append(i).append("][outfiltered").append(i).append("]amix=inputs=3,volume=9.3dB").append("[outmixed").append(i).append("];");
                 mapCommand.add("-map");
@@ -337,7 +339,7 @@ public class StreamRecorderRunnable implements Runnable {
         try {
             Thread.sleep(3000); // Wait for 5 seconds
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            logger.error("An error occurred", e);
             outputLineProperty.setValue(e.toString());
         }
 
@@ -413,10 +415,6 @@ public class StreamRecorderRunnable implements Runnable {
 
     public void setOutputDirectory(String outputDirectory) {
         this.outputDirectory = outputDirectory;
-    }
-
-    public int getTimeNeededToOpenADevice() {
-        return timeNeededToOpenADevice;
     }
 
     public void setTimeNeededToOpenADevice(int timeNeededToOpenADevice) {

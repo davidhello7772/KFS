@@ -14,11 +14,10 @@ import java.util.Map;
 
 public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleListener {
 
-    private final FlowPane flowPane;
     private final Map<String, LevelMeter> vuMeters = new HashMap<>();
 
     public LevelMeterPanel(ComboBox<String>[] inputAudioSources, ComboBox<String>[] inputAudioSourcesChannel, Map<String, String> languageColorsMap) {
-        flowPane = new FlowPane();
+        FlowPane flowPane = new FlowPane();
         flowPane.setPadding(new Insets(10));
         flowPane.setHgap(10);
         flowPane.setVgap(10);

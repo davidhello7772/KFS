@@ -221,18 +221,11 @@ public class AudioCaptureManager {
                     if (channel == null) {
                         channel = "Stereo";
                     }
-                    switch (channel) {
-                        case SettingsUtil.AUDIO_CHANNEL_LEFT:
-                            monoSample = leftSample;
-                            break;
-                        case SettingsUtil.AUDIO_CHANNEL_RIGHT:
-                            monoSample = rightSample;
-                            break;
-                        case SettingsUtil.AUDIO_CHANNEL_STEREO:
-                        default:
-                            monoSample = (leftSample + rightSample) / 2;
-                            break;
-                    }
+                    monoSample = switch (channel) {
+                        case SettingsUtil.AUDIO_CHANNEL_LEFT -> leftSample;
+                        case SettingsUtil.AUDIO_CHANNEL_RIGHT -> rightSample;
+                        default -> (leftSample + rightSample) / 2;
+                    };
                 } else {
                     monoSample = leftSample;
                 }
@@ -293,7 +286,7 @@ public class AudioCaptureManager {
                     }
                 } catch (Exception e) {
                     System.err.println("Error in audio capture thread for " + mixerInfo.getName() + ": " + e.getMessage());
-                    e.printStackTrace();
+                   // e.printStackTrace();
                 } finally {
                     cleanup();
                 }

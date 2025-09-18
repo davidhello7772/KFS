@@ -1,13 +1,20 @@
 package org.kadampa.festivalstreaming;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.Map;
 import java.util.LinkedHashMap;
-import java.util.TreeMap;
 import java.util.Arrays;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.IOException;
+
 public class SettingsUtil {
+    private static final Logger logger = LoggerFactory.getLogger(SettingsUtil.class);
     public static final String AUDIO_CHANNEL_LEFT = "Left";
     public static final String AUDIO_CHANNEL_RIGHT = "Right";
     public static final String AUDIO_CHANNEL_JOIN = "Join";
@@ -98,20 +105,8 @@ public class SettingsUtil {
                 }
             }
 
-        // Create Properties object and add sorted entries
-        Properties props = new Properties() {
-            @Override
-            public synchronized Object put(Object key, Object value) {
-                return super.put(key, value);
-            }
-        };
-
-        for (Map.Entry<String, String> entry : sortedProps.entrySet()) {
-            props.setProperty(entry.getKey(), entry.getValue());
-        }
-
         try (FileOutputStream out = new FileOutputStream(sanitizedFileName);
-             OutputStreamWriter writer = new OutputStreamWriter(out, "UTF-8")) {
+             OutputStreamWriter writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)) {
 
             // Custom store method to maintain order and add comments
             writer.write("#Festival Streaming Settings\n");
@@ -167,7 +162,7 @@ public class SettingsUtil {
             }
 
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("An error occurred", e);
         }
     }
 
@@ -185,7 +180,7 @@ public class SettingsUtil {
 
     private static String escapeValue(String value) {
         if (value == null) return "";
-        return value.replaceAll("([\\\\])", "\\\\$1").replaceAll("\n", "\\\\n").replaceAll("\r", "\\\\r");
+        return value.replaceAll("(\\\\)", "\\\\$1").replaceAll("\n", "\\\\n").replaceAll("\r", "\\\\r");
     }
 
     public static Settings loadSettings(String key) {
@@ -266,7 +261,7 @@ public class SettingsUtil {
             }
 
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("An error occurred", e);
         }
 
         return settings;
