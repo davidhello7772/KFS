@@ -65,7 +65,8 @@ public class LevelMeter {
     private static final Color COLOR_GLOW_PEAK = Color.rgb(255, 0, 0, 0.8);
     private static final Color COLOR_GLOW_OFF = Color.rgb(100, 100, 100, 0.8);
     private static final Color COLOR_SCALE_MARK = Color.rgb(255, 255, 255, 0.4);
-    private static final Color COLOR_0DB_TICK = Color.rgb(255, 0, 0, 0.7);
+    private static final Color COLOR_0DB_TICK = Color.rgb(255, 255, 0, 0.9);
+    private static final Color COLOR_0DB_TICK_GLOW = Color.rgb(255, 255, 0, 0.4);
     //</editor-fold>
 
     public interface MonitorToggleListener {
@@ -429,6 +430,13 @@ public class LevelMeter {
                 tick = new Rectangle(METER_WIDTH, 2); // Full width for 0dB and English mix -24dB
                 tick.setFill(COLOR_0DB_TICK);
                 tick.setLayoutX(0); // Position at the start of the meter
+
+                // Add a glow effect to the 0dB tick
+                DropShadow tickGlow = new DropShadow();
+                tickGlow.setColor(COLOR_0DB_TICK_GLOW);
+                tickGlow.setRadius(10);
+                tickGlow.setSpread(0.5);
+                tick.setEffect(tickGlow);
             } else {
                 tick = new Rectangle(METER_WIDTH / 4, 2); // Original width for others
                 tick.setFill(COLOR_SCALE_MARK);
