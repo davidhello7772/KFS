@@ -1,13 +1,18 @@
 package org.kadampa.festivalstreaming;
 
 import com.github.sarxos.webcam.Webcam;
+import javafx.animation.Animation;
+import javafx.animation.Interpolator;
 import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
 import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleDoubleProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.concurrent.Task;
@@ -25,7 +30,9 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
@@ -51,6 +58,7 @@ public class StreamingGUI extends Application {
     private static final String WAITING_TO_LIVESTREAM = "WAITING TO LIVESTREAM";
     private static final String CURRENTLY_RECORDING = "RECORDING ON LOCAL MACHINE IN PROGRESS";
     private static final String CURRENTLY_LIVESTREAMING ="LIVESTREAM IN PROGRESS";
+    private static final String CURRENTLY_LIVESTREAMING_AND_RECORDING = "LIVESTREAM AND RECORDING ON LOCAL MACHINE IN PROGRESS";
     private final ComboBox<String>[] inputAudioSources;
     private final ComboBox<String>[] inputAudioSourcesChannel;
     private final ComboBox<String>[] inputNoiseReductionValues;
@@ -94,6 +102,8 @@ public class StreamingGUI extends Application {
     private final Label videoPID = new Label("");
     private final List<Label> audioPidLabels = new ArrayList<>();
     private final Label nowPlayingLabel = new Label("");
+    private final Circle liveDot = new Circle(9);
+    private final DropShadow liveDotGlow = new DropShadow();
     private final HBox nowPlayingBox = new HBox(nowPlayingLabel);
     private final BooleanProperty isTheOutputAFile = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
@@ -115,7 +125,13 @@ public class StreamingGUI extends Application {
     private final Image iconLiveStreamPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/live-streaming-playing.jpg")));
     private final Image iconRecordingIdle = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-idle.png")));
     private final Image iconRecordingPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-playing.jpg")));
-    private String bgColor = "-green-color";
+    // Keep in sync with -green-color / -orange-color in javafx@main.css
+    private static final Color LIVE_GREEN = Color.web("#22C55E");
+    private static final Color ERROR_ORANGE = Color.web("#EE7130");
+    private static final long ERROR_COLOUR_HOLD_MS = 3000;
+    private final DoubleProperty barPulse = new SimpleDoubleProperty(1.0);
+    private Color barBaseColor = LIVE_GREEN;
+    private long lastErrorMillis = 0;
     private int firstOpeningDeviceStartupTime = 0;
     private int secondOpeningDeviceStartupTime = 0;
     private boolean playingError;
@@ -225,25 +241,35 @@ public class StreamingGUI extends Application {
         startButton = new Button("Start");
         startButton.getStyleClass().add("event-button");
         startButton.getStyleClass().add("success-button");
+        liveDot.setFill(Color.WHITE);
+        liveDotGlow.setColor(Color.WHITE);
+        liveDotGlow.setSpread(0.4);
+        liveDot.setEffect(liveDotGlow);
+
+        // The whole bar breathes between a deep and a vivid shade of the state colour, so it is
+        // impossible to miss from across the room but never blinks away to nothing
+        barPulse.addListener(observable -> paintStatusBar());
         blinkingTimeLine = new Timeline(
-                new KeyFrame(Duration.seconds(0.2), e -> {
-                    nowPlayingBox.setStyle("");
-                    bgColor = "-green-color";
-                    if(isTheOutputAFile.get())
-                        primaryStage.getIcons().setAll(iconRecordingIdle);
-                    else
-                        primaryStage.getIcons().setAll(iconLiveStreamIdle);
-                }),
-                new KeyFrame(Duration.seconds(1), e -> {
-                    nowPlayingBox.setStyle("-fx-background-color: "+bgColor+";");
-                    if(isTheOutputAFile.get())
-                        primaryStage.getIcons().setAll(iconRecordingPlaying);
-                    else
-                        primaryStage.getIcons().setAll(iconLiveStreamPlaying);    }) // Blinking color (red)
+                new KeyFrame(Duration.ZERO, e -> onPulse(true),
+                        new KeyValue(barPulse, 1.0, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDot.opacityProperty(), 1.0, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDot.scaleXProperty(), 1.0, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDot.scaleYProperty(), 1.0, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDotGlow.radiusProperty(), 22.0, Interpolator.EASE_BOTH)),
+                new KeyFrame(Duration.seconds(0.9), e -> onPulse(false),
+                        new KeyValue(barPulse, 0.0, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDot.opacityProperty(), 0.35, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDot.scaleXProperty(), 0.7, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDot.scaleYProperty(), 0.7, Interpolator.EASE_BOTH),
+                        new KeyValue(liveDotGlow.radiusProperty(), 4.0, Interpolator.EASE_BOTH))
         );
 
         blinkingTimeLine.setCycleCount(Timeline.INDEFINITE); // Repeat indefinitely
-        blinkingTimeLine.setAutoReverse(true); // Auto-reverse to create the blinking effect
+        blinkingTimeLine.setAutoReverse(true); // Breathe back down instead of jumping
+
+        // The dot only exists while the animation runs, so the bar shows nothing extra when idle
+        liveDot.visibleProperty().bind(blinkingTimeLine.statusProperty().isEqualTo(Animation.Status.RUNNING));
+        liveDot.managedProperty().bind(liveDot.visibleProperty());
 
         SVGPath playPath = new SVGPath();
         playPath.setContent("M16.6582 9.28638C18.098 10.1862 18.8178 10.6361 19.0647 11.2122C19.2803 11.7152 19.2803 12.2847 19.0647 12.7878C18.8178 13.3638 18.098 13.8137 16.6582 14.7136L9.896 18.94C8.29805 19.9387 7.49907 20.4381 6.83973 20.385C6.26501 20.3388 5.73818 20.0469 5.3944 19.584C5 19.053 5 18.1108 5 16.2264V7.77357C5 5.88919 5 4.94701 5.3944 4.41598C5.73818 3.9531 6.26501 3.66111 6.83973 3.6149C7.49907 3.5619 8.29805 4.06126 9.896 5.05998L16.6582 9.28638Z");
@@ -363,22 +389,45 @@ public class StreamingGUI extends Application {
     private void applyStyleOnOutputTypeChange(Boolean isOutputLiveStreamAndFile, Boolean isOutputAFile) {
         if(isOutputLiveStreamAndFile) {
             updateSceneStyle("livestreaming-and-record");
-            currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM_AND_RECORD);
-            primaryStage.getIcons().setAll(iconRecordingIdle);
             primaryStage.setTitle("Kadampa Festival - Livestreaming and Recording the session");
         }
         else if(isOutputAFile) {
             updateSceneStyle("light-blue");
-            currentInformationTextProperty.setValue(WAITING_TO_RECORD);
-            primaryStage.getIcons().setAll(iconRecordingIdle);
             primaryStage.setTitle("Kadampa Festival - Recording the session");
         }
         else {
             updateSceneStyle("livestream");
-            currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM);
-            primaryStage.getIcons().setAll(iconLiveStreamIdle);
             primaryStage.setTitle("Kadampa Festival - Live stream the session");
         }
+        currentInformationTextProperty.setValue(waitingText());
+        primaryStage.getIcons().setAll(stateIcon(false));
+    }
+
+    /**
+     * The message, the icon and the title all depend on the output type, and "Livestream And File"
+     * also makes isTheOutputAFile true. Everything therefore reads the mode from here, so the three
+     * modes cannot disagree between waiting, running and stopped.
+     */
+    private String waitingText() {
+        if (isTheOutputFileAndUrl.get()) {
+            return WAITING_TO_LIVESTREAM_AND_RECORD;
+        }
+        return isTheOutputAFile.get() ? WAITING_TO_RECORD : WAITING_TO_LIVESTREAM;
+    }
+
+    private String inProgressText() {
+        if (isTheOutputFileAndUrl.get()) {
+            return CURRENTLY_LIVESTREAMING_AND_RECORDING;
+        }
+        return isTheOutputAFile.get() ? CURRENTLY_RECORDING : CURRENTLY_LIVESTREAMING;
+    }
+
+    /** Writing to the local machine wins the icon, so recording and both share the recording one. */
+    private Image stateIcon(boolean playing) {
+        if (isTheOutputAFile.get()) {
+            return playing ? iconRecordingPlaying : iconRecordingIdle;
+        }
+        return playing ? iconLiveStreamPlaying : iconLiveStreamIdle;
     }
 
 
@@ -504,22 +553,18 @@ public class StreamingGUI extends Application {
 
     private ScrollPane buildUI() {
         VBox root = new VBox();
+        // The logo lives in the status bar: the title row it used to share with the application
+        // name is gone, which gives its whole height back to the tabs
         ImageView logoView = new ImageView(new Image("https://kadampafestivals.org/wp-content/uploads/2024/01/New-NKT-IKBU-Logo-Kadampa-Blue.png"));
-        logoView.setFitHeight(50);
-        logoView.setFitWidth(50);
-        // Create a label for the title
-        Label titleLabel = new Label("International Kadampa Festival Streaming");
-        titleLabel.getStyleClass().add("title");
-        titleLabel.getStyleClass().add("primary-text");
-
-        // Create an HBox to hold the logo and the title label
-        HBox titleBox = new HBox(10, logoView, titleLabel);
-        titleBox.setAlignment(Pos.CENTER); // Center align the contents of the HBox
-        titleBox.setPadding(new Insets(20,0,20,0));
+        logoView.setFitHeight(34);
+        logoView.setFitWidth(34);
+        logoView.setPreserveRatio(true);
 
         nowPlayingLabel.textProperty().bind(currentInformationTextProperty);
         nowPlayingLabel.setStyle("-fx-font-size: 24px;");
 
+        nowPlayingBox.getChildren().setAll(logoView, liveDot, nowPlayingLabel);
+        nowPlayingBox.setSpacing(14);
         nowPlayingBox.setMinHeight(50);
         nowPlayingBox.setMaxHeight(50);
         nowPlayingBox.setMinWidth(WINDOW_WIDTH-5);
@@ -537,7 +582,13 @@ public class StreamingGUI extends Application {
         // Language Settings Tab
         Tab settingTab = new Tab("Settings");
         settingTab.setClosable(false);
-        settingTab.setContent(buildTabSettings());
+        // Its own scroll pane, like the console tab has: unfolding the advanced options makes this
+        // tab taller than the window, and the tab would otherwise just clip what does not fit,
+        // putting the last options and the Save button out of reach.
+        ScrollPane settingsScrollPane = new ScrollPane(buildTabSettings());
+        settingsScrollPane.setFitToWidth(true);
+        settingsScrollPane.getStyleClass().add("settings-scroll-pane");
+        settingTab.setContent(settingsScrollPane);
         tabPane.getTabs().add(settingTab);
 
 
@@ -547,9 +598,13 @@ public class StreamingGUI extends Application {
         tabPane.getTabs().add(infoTab);
 
 
-        root.getChildren().addAll(titleBox,nowPlayingBox,tabPane);
+        root.getChildren().addAll(nowPlayingBox,tabPane);
 
         mainScrollPane = new ScrollPane(root);
+        // Let the content take the width of the viewport rather than its own preferred width:
+        // the two are within a few pixels of each other, which was enough to raise a horizontal
+        // scroll bar with nothing worth scrolling to
+        mainScrollPane.setFitToWidth(true);
         return mainScrollPane;
     }
 
@@ -631,8 +686,7 @@ public class StreamingGUI extends Application {
             if(streamRecorder.isAliveProperty().getValue()) {
                 Platform.runLater(()->{
                     startButton.setDisable(true);
-                    if(isTheOutputAFile.getValue())  currentInformationTextProperty.setValue(CURRENTLY_RECORDING);
-                    else currentInformationTextProperty.setValue(CURRENTLY_LIVESTREAMING);
+                    currentInformationTextProperty.setValue(inProgressText());
 
                     blinkingTimeLine.play(); // Start the animation
                 });
@@ -667,22 +721,41 @@ public class StreamingGUI extends Application {
         return new VBox(10, buttonBox,consoleBox);
     }
 
+    /** Repaints the bar at the current point of the breathing cycle, in whichever colour the state
+     *  is in. It never drops below 62% brightness, so the bar always reads as green or orange. */
+    private void paintStatusBar() {
+        Color shade = barBaseColor.deriveColor(0, 1, 0.62 + 0.38 * barPulse.get(), 1);
+        nowPlayingBox.setStyle("-fx-background-color: " + toHexString(shade) + ";");
+    }
+
+    /**
+     * Called at both ends of the breathing cycle. An ffmpeg error turns the bar orange, which is
+     * held for a few seconds so that even a single one is seen pulsing before the bar breathes
+     * green again. The taskbar icon keeps alternating, to stay noticeable when minimised.
+     */
+    private void onPulse(boolean atFullBrightness) {
+        primaryStage.getIcons().setAll(stateIcon(atFullBrightness));
+        if (System.currentTimeMillis() - lastErrorMillis > ERROR_COLOUR_HOLD_MS) {
+            barBaseColor = LIVE_GREEN;
+        }
+    }
+
+    private static String toHexString(Color color) {
+        return String.format("#%02X%02X%02X",
+                (int) Math.round(color.getRed() * 255),
+                (int) Math.round(color.getGreen() * 255),
+                (int) Math.round(color.getBlue() * 255));
+    }
+
     private void reinitialiseGraphicElements() {
         manualScroll = false;
         stopButton.setGraphic(stopPath);
-        if(isTheOutputAFile.getValue())  currentInformationTextProperty.setValue(WAITING_TO_RECORD);
-        else currentInformationTextProperty.setValue(WAITING_TO_LIVESTREAM);
+        currentInformationTextProperty.setValue(waitingText());
         stopButton.setDisable(true);
         blinkingTimeLine.stop();
         nowPlayingBox.setStyle("-fx-background-color: -red-color;");
         startButton.setDisable(streamRecorder.isAliveProperty().getValue());
-        if(isTheOutputFileAndUrl.get()) {
-            primaryStage.getIcons().setAll(iconRecordingIdle);
-        }
-        else if(isTheOutputAFile.get())
-            primaryStage.getIcons().setAll(iconRecordingIdle);
-        else
-            primaryStage.getIcons().setAll(iconLiveStreamIdle);
+        primaryStage.getIcons().setAll(stateIcon(false));
     }
 
     private Node buildTabSettings() {
@@ -699,9 +772,11 @@ public class StreamingGUI extends Application {
         ColumnConstraints col_1 = new ColumnConstraints();
         col_1.setPercentWidth(15);
         ColumnConstraints col_2 = new ColumnConstraints();
-        col_2.setPercentWidth(60);
+        col_2.setPercentWidth(57);
+        // The device combo only needs 450px of the column above, so the 3% goes to the two columns
+        // on the right, which have to fit the noise reduction presets on the video input row
         ColumnConstraints col_3 = new ColumnConstraints();
-        col_3.setPercentWidth(15);
+        col_3.setPercentWidth(18);
         ColumnConstraints col_4 = new ColumnConstraints();
         col_4.setPercentWidth(10);
 
@@ -725,6 +800,9 @@ public class StreamingGUI extends Application {
         inputGrid.add(videoInputLabelHBox, 0, row);
         inputGrid.add(inputVideoSource, 1, row);
         inputVideoSource.setPrefWidth(450);
+        HBox noisePresetBox = buildNoiseReductionPresets();
+        inputGrid.add(noisePresetBox, 2, row);
+        GridPane.setColumnSpan(noisePresetBox, 2);
 
         row++;
         //If it's empty, we select the first element
@@ -764,7 +842,6 @@ public class StreamingGUI extends Application {
         // Create an HBox to hold both labels
         HBox noiseReductionLabelHBox = new HBox(1,noiseReductionLabel,noiseReductionInfoLabel);  // 5 is the spacing between the labels
         inputGrid.add(noiseReductionLabelHBox, 3, row);
-        inputGrid.add(buildNoiseReductionPresets(), 2, row);
         row++;
         for (int i = 2; i < Settings.LANGUAGES.length; i++) {
             addLanguageRow(inputGrid, row, Settings.LANGUAGES[i].name() + ":", inputAudioSources[i], inputAudioSourcesChannel[i], inputNoiseReductionValues[i], Settings.LANGUAGES[i].name());
@@ -772,19 +849,7 @@ public class StreamingGUI extends Application {
         }
 
         int comboWith = 100;
-        ColumnConstraints col1 = new ColumnConstraints();
-        col1.setPercentWidth(13);
-        ColumnConstraints col2 = new ColumnConstraints();
-        col2.setPercentWidth(20);
-        ColumnConstraints col3 = new ColumnConstraints();
-        col3.setPercentWidth(15);
-        ColumnConstraints col4 = new ColumnConstraints();
-        col4.setPercentWidth(22);
-        ColumnConstraints col5 = new ColumnConstraints();
-        col5.setPercentWidth(15);
-        ColumnConstraints col6 = new ColumnConstraints();
-        col6.setPercentWidth(20);
-        inputGrid2.getColumnConstraints().addAll(col1, col2, col3,col4,col5,col6);
+        inputGrid2.getColumnConstraints().addAll(outputColumnConstraints());
 
         row = 0;
         Label chooseOutputTypeLabelInfo = new Label("?");
@@ -851,12 +916,14 @@ public class StreamingGUI extends Application {
         Label outputUrlLabel = new Label("Streaming url:");
         // Create an HBox to hold both labels
         outputUrlHBox.setSpacing(1);
-        outputUrlHBox.setMinWidth(WINDOW_WIDTH);
         Region space = new Region();
         space.setMinWidth(50);
         space.setMaxWidth(50);
-        inputSrtURL.setMinWidth(670);
-        inputSrtURL.setMaxWidth(670);
+        // Takes whatever room is left instead of a fixed width, so the row never forces the tab
+        // wider than the window and no horizontal scroll bar is needed
+        inputSrtURL.setMinWidth(400);
+        inputSrtURL.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(inputSrtURL, Priority.ALWAYS);
         outputUrlHBox.getChildren().setAll(outputUrlLabel,outputUrlinfoLabel,space, inputSrtURL);
 
         inputGrid2.add(outputUrlHBox, 0, row);
@@ -890,8 +957,9 @@ public class StreamingGUI extends Application {
         Region spacer = new Region();
         spacer.setMinWidth(32);
         spacer.setMaxWidth(32);
-        inputOutputDirectory.setMinWidth(600);
-        inputOutputDirectory.setMaxWidth(600);
+        inputOutputDirectory.setMinWidth(400);
+        inputOutputDirectory.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(inputOutputDirectory, Priority.ALWAYS);
         Region spacer2 = new Region();
         spacer2.setMinWidth(20);
         spacer2.setMaxWidth(20);
@@ -905,13 +973,15 @@ public class StreamingGUI extends Application {
         Separator verticalSeparator = new Separator();
         inputGrid2.add(verticalSeparator,0,row);
         GridPane.setColumnSpan(verticalSeparator, 6);
-        row++;
 
-        Label advancedOutputLabel = new Label("Advanced option");
-        advancedOutputLabel.setStyle("-fx-font-weight: bold;");
-        inputGrid2.add(advancedOutputLabel,0,row);
-        GridPane.setColumnSpan(advancedOutputLabel, 6);
-        row++;
+        // These are set once for a given venue and only get in the way of the settings used every
+        // session, so they get their own grid and fold away behind the header below
+        GridPane advancedGrid = new GridPane();
+        advancedGrid.setHgap(10);
+        advancedGrid.setVgap(10);
+        advancedGrid.setPadding(new Insets(10));
+        advancedGrid.getColumnConstraints().addAll(outputColumnConstraints());
+        row = 0;
 
         Label delayinfoLabel = new Label("?");
         delayinfoLabel.getStyleClass().add("info-for-tooltip");
@@ -924,9 +994,9 @@ public class StreamingGUI extends Application {
         Label delayLabel = new Label("Delay in ms:");
         // Create an HBox to hold both labels
         HBox delayHBox = new HBox(1,delayLabel,delayinfoLabel);
-        inputGrid2.add(delayHBox, 0, row);
+        advancedGrid.add(delayHBox, 0, row);
         if(inputSoundDelay.getText()==null || inputSoundDelay.getText().isEmpty()) inputSoundDelay.setText("0");
-        inputGrid2.add(inputSoundDelay, 1, row);
+        advancedGrid.add(inputSoundDelay, 1, row);
         inputSoundDelay.setMaxWidth(comboWith);
 
         Label pixelFormatInfoLabel = new Label("?");
@@ -940,11 +1010,11 @@ public class StreamingGUI extends Application {
         Label pixelFormatlLabel = new Label("Pixel format:");
         // Create an HBox to hold both labels
         HBox audioChannelLabelHBox2 = new HBox(1,pixelFormatlLabel,pixelFormatInfoLabel);
-        inputGrid2.add(audioChannelLabelHBox2, 2, row);
+        advancedGrid.add(audioChannelLabelHBox2, 2, row);
 
         //If it's empty, we select the first element
         if(inputPixelFormat.getValue()==null || inputPixelFormat.getValue().isEmpty()) inputPixelFormat.setValue(inputPixelFormat.getItems().get(0));
-        inputGrid2.add(inputPixelFormat, 3, row);
+        advancedGrid.add(inputPixelFormat, 3, row);
         inputPixelFormat.setPrefWidth(comboWith);
 
         Label outputResInfoLabel = new Label("?");
@@ -968,9 +1038,9 @@ public class StreamingGUI extends Application {
         Label outputReslLabel = new Label("Output resolution:");
         // Create an HBox to hold both labels
         HBox outputResLabelHBox = new HBox(1,outputReslLabel,outputResInfoLabel);
-        inputGrid2.add(outputResLabelHBox, 4, row);
+        advancedGrid.add(outputResLabelHBox, 4, row);
         if(inputSrtResolution.getValue()==null || inputSrtResolution.getValue().isEmpty()) inputSrtResolution.setValue(inputSrtResolution.getItems().get(0));
-        inputGrid2.add(inputSrtResolution, 5, row);
+        advancedGrid.add(inputSrtResolution, 5, row);
         inputSrtResolution.setPrefWidth(comboWith);
         row++;
 
@@ -992,10 +1062,10 @@ public class StreamingGUI extends Application {
         Label audioBitrateLabel = new Label("Audio bitrate:");
         // Create an HBox to hold both labels
         HBox audioBitrateLabelHBox = new HBox(1,audioBitrateLabel,audioBitrateInfoLabel);
-        inputGrid2.add(audioBitrateLabelHBox, 0, row);
+        advancedGrid.add(audioBitrateLabelHBox, 0, row);
         //If it's empty, we select the first element
         if(inputAudioBitrate.getValue()==null || inputAudioBitrate.getValue().isEmpty()) inputAudioBitrate.setValue(inputAudioBitrate.getItems().get(0));
-        inputGrid2.add(inputAudioBitrate, 1, row);
+        advancedGrid.add(inputAudioBitrate, 1, row);
         inputAudioBitrate.setPrefWidth(comboWith);
 
 
@@ -1014,9 +1084,9 @@ public class StreamingGUI extends Application {
         // Create an HBox to hold both labels
         HBox codecLabelHBox = new HBox(1,codecLabel,codecInfoLabel);
         if(inputEncoder.getValue()==null || inputEncoder.getValue().isEmpty()) inputEncoder.setValue(inputEncoder.getItems().get(0));
-        inputGrid2.add(codecLabelHBox, 2, row);
+        advancedGrid.add(codecLabelHBox, 2, row);
         inputEncoder.setPrefWidth(comboWith);
-        inputGrid2.add(inputEncoder, 3, row);
+        advancedGrid.add(inputEncoder, 3, row);
 
         Label fpsInfoLabel = new Label("?");
         fpsInfoLabel.getStyleClass().add("info-for-tooltip");
@@ -1029,8 +1099,8 @@ public class StreamingGUI extends Application {
         Label fpsLabel = new Label("Frame per second:");
         // Create an HBox to hold both labels
         HBox fpsLabelHBox = new HBox(1,fpsLabel,fpsInfoLabel);
-        inputGrid2.add(fpsLabelHBox, 4, row);
-        inputGrid2.add(inputFramePerSecond, 5, row);
+        advancedGrid.add(fpsLabelHBox, 4, row);
+        advancedGrid.add(inputFramePerSecond, 5, row);
         //If it's empty, we select the first element
         if(inputFramePerSecond.getValue()==null || inputFramePerSecond.getValue().isEmpty()) inputFramePerSecond.setValue(inputFramePerSecond.getItems().get(0));
         inputFramePerSecond.setPrefWidth(comboWith);
@@ -1059,8 +1129,8 @@ public class StreamingGUI extends Application {
         Label videoBitrateLabel = new Label("Video bitrate:");
         // Create an HBox to hold both labels
         HBox videoBitrateLabelHBox = new HBox(1,videoBitrateLabel,videoBitrateInfoLabel);
-        inputGrid2.add(videoBitrateLabelHBox, 0, row);
-        inputGrid2.add(inputVideoBitrate, 1, row);
+        advancedGrid.add(videoBitrateLabelHBox, 0, row);
+        advancedGrid.add(inputVideoBitrate, 1, row);
         //If it's empty, we select the first element
         if(inputVideoBitrate.getValue()==null || inputVideoBitrate.getValue().isEmpty()) inputVideoBitrate.setValue(inputVideoBitrate.getItems().get(0));
         inputVideoBitrate.setPrefWidth(comboWith);
@@ -1078,8 +1148,8 @@ public class StreamingGUI extends Application {
         HBox videoBufferLabelHBox = new HBox(2,videoBufferLabel,videoBufferInfoLabel);
         inputVideoSourceBuffer.setPrefWidth(comboWith);
         if(inputVideoSourceBuffer.getValue()==null || inputVideoSourceBuffer.getValue().isEmpty()) inputVideoSourceBuffer.setValue(inputVideoSourceBuffer.getItems().get(0));
-        inputGrid2.add(videoBufferLabelHBox, 2, row);
-        inputGrid2.add(inputVideoSourceBuffer, 3, row);
+        advancedGrid.add(videoBufferLabelHBox, 2, row);
+        advancedGrid.add(inputVideoSourceBuffer, 3, row);
 
         Label audioBufferInfoLabel = new Label("?");
         audioBufferInfoLabel.getStyleClass().add("info-for-tooltip");
@@ -1092,8 +1162,8 @@ public class StreamingGUI extends Application {
         Label audioBufferLabel = new Label("Audio buffer size:");
         // Create an HBox to hold both labels
         HBox audioBufferLabelHBox = new HBox(2,audioBufferLabel,audioBufferInfoLabel);
-        inputGrid2.add(audioBufferLabelHBox, 4, row);
-        inputGrid2.add(inputAudioSourceBuffer, 5, row);
+        advancedGrid.add(audioBufferLabelHBox, 4, row);
+        advancedGrid.add(inputAudioSourceBuffer, 5, row);
         //If it's empty, we select the first element
         if(inputAudioSourceBuffer.getValue()==null || inputAudioSourceBuffer.getValue().isEmpty()) inputAudioSourceBuffer.setValue(inputAudioSourceBuffer.getItems().get(0));
         inputAudioSourceBuffer.setPrefWidth(comboWith);
@@ -1123,7 +1193,21 @@ public class StreamingGUI extends Application {
         saveHBox.setAlignment(Pos.CENTER);
         saveHBox.setPadding(new Insets(20,0,20,0));
 
-        return new VBox(inputGrid,inputGrid2,saveHBox);
+        // A TitledPane gives the standard disclosure arrow and keyboard handling for free. It starts
+        // folded: these values are set once for a venue, so hiding them keeps the settings that are
+        // used every session on one screen.
+        TitledPane advancedPane = new TitledPane("Advanced options", advancedGrid);
+        advancedPane.getStyleClass().add("advanced-pane");
+        advancedPane.setExpanded(false);
+        advancedPane.setAnimated(true);
+        // Percentage columns ask for whatever width makes their widest label fit, which for this
+        // grid is far more than the window. Pin it to the width of the grids above, or the pane
+        // stretches the tab and the overflow is clipped with no scroll bar to reach it.
+        advancedGrid.setMaxWidth(WINDOW_WIDTH-10);
+        advancedPane.setMaxWidth(WINDOW_WIDTH-10);
+        advancedPane.setPrefWidth(WINDOW_WIDTH-10);
+
+        return new VBox(inputGrid,inputGrid2,advancedPane,saveHBox);
     }
 
     @Override
@@ -1155,13 +1239,37 @@ public class StreamingGUI extends Application {
 
     }
 
+    /** The output settings and the advanced ones are two grids so that the advanced section can be
+     *  folded away, but they share these columns so their rows keep lining up. */
+    private List<ColumnConstraints> outputColumnConstraints() {
+        List<ColumnConstraints> columns = new ArrayList<>();
+        for (double percentWidth : new double[]{13, 20, 15, 22, 15, 20}) {
+            ColumnConstraints column = new ColumnConstraints();
+            column.setPercentWidth(percentWidth);
+            columns.add(column);
+        }
+        return columns;
+    }
+
     /**
      * One-click presets applying a noise reduction level to every language except the reference
-     * one (English). Placed on the "Noise reduction" header row, beside the column it drives.
+     * one (English). They sit on the video input row, which is the only line with room to spell
+     * out what they do.
      */
     private HBox buildNoiseReductionPresets() {
-        HBox presetBox = new HBox(4, new Label("All:"));
-        presetBox.setAlignment(Pos.CENTER_RIGHT);
+        Label presetLabel = new Label("Noise reduction presets:");
+        presetLabel.getStyleClass().add("preset-label");
+        Label presetInfoLabel = new Label("?");
+        presetInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip presetInfoTooltip = new Tooltip("Sets the noise reduction of every language at once, except "
+                + Settings.ENGLISH_LANGUAGE + ", which keeps its own level.");
+        Tooltip.install(presetInfoLabel, presetInfoTooltip);
+        presetInfoTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+        presetInfoTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+        presetInfoTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        presetInfoTooltip.getStyleClass().add("tooltip");
+        HBox presetBox = new HBox(6, presetLabel, presetInfoLabel);
+        presetBox.setAlignment(Pos.CENTER_LEFT);
         for (String level : new String[]{"0", "1", "2"}) {
             Button presetButton = new Button(level);
             presetButton.getStyleClass().add("preset-button");
@@ -1241,7 +1349,7 @@ public class StreamingGUI extends Application {
             return;
         }
         displayPIDInfo();
-        bgColor = "-green-color";
+        barBaseColor = LIVE_GREEN;
         playingError = false;
         doWeAutomaticallyScrollAtBottom = true;
         streamRecorder.setSrtUrl(inputSrtURL.getText());
@@ -1468,7 +1576,8 @@ public class StreamingGUI extends Application {
         if (warningMatcher.find()) text.setFill(Color.ORANGE);
         if (errorMatcher.find()) {
             text.setFill(Color.RED);
-            bgColor = "-orange-color";
+            barBaseColor = ERROR_ORANGE;
+            lastErrorMillis = System.currentTimeMillis();
             Task<Void> task = new Task<>() {
                 @Override
                 protected Void call() {

@@ -1,7 +1,8 @@
 * {
     -webfx-switch-selected-background-color: #0096D6;
-    -green-color: #41BA4D;
-    -green-color-hover: #38a143;
+    /* -green-color is mirrored by LIVE_GREEN in StreamingGUI, which pulses the status bar */
+    -green-color: #22C55E;
+    -green-color-hover: #16A34A;
     -blue-color: #0096D6;
     -blue-color-hover: #0082ba;
     -grey-color: #838788;
@@ -92,17 +93,69 @@
     -fx-background-color: -grey-color-hover;
 }
 
-.preset-button {
-    -fx-background-radius: 4;
-    -fx-background-color: -grey-color;
-    -fx-text-fill: white;
+/* The settings tab scrolls on its own, but must not draw a panel of its own over the tab */
+.settings-scroll-pane, .settings-scroll-pane > .viewport {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+/* The advanced section keeps the flat look of the settings tab: no panel box, just the bold
+   header and its disclosure arrow, which stay clickable across the whole width. */
+.advanced-pane {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.advanced-pane > .title {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    /* Set explicitly: the header must keep body-text size whatever else the sheet says about titles */
+    -fx-font-size: 13px;
     -fx-font-weight: bold;
-    -fx-pref-width: 26px;
-    -fx-min-width: 26px;
-    -fx-max-width: 26px;
-    -fx-pref-height: 24px;
-    -fx-min-height: 24px;
-    -fx-max-height: 24px;
+    -fx-padding: 4 10 4 10;
+    -fx-cursor: hand;
+}
+
+.advanced-pane > .title:hover > .text {
+    -fx-fill: -blue-color;
+}
+
+.advanced-pane > .title > .arrow-button > .arrow {
+    -fx-background-color: -grey-color;
+}
+
+.advanced-pane > .title:hover > .arrow-button > .arrow {
+    -fx-background-color: -blue-color;
+}
+
+.advanced-pane > *.content {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+/* Deliberately quiet: a shortcut sitting on the video input row, not something competing with
+   the settings themselves. It only takes colour under the cursor. */
+.preset-label {
+    -fx-font-size: 11px;
+    -fx-text-fill: -grey-color;
+}
+
+.preset-button {
+    -fx-background-radius: 3;
+    -fx-background-color: transparent;
+    -fx-border-color: #c9cdce;
+    -fx-border-radius: 3;
+    -fx-border-width: 1;
+    -fx-text-fill: -grey-color;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-pref-width: 22px;
+    -fx-min-width: 22px;
+    -fx-max-width: 22px;
+    -fx-pref-height: 19px;
+    -fx-min-height: 19px;
+    -fx-max-height: 19px;
     -fx-padding: 0;
     -fx-alignment: center;
     -fx-cursor: hand;
@@ -110,6 +163,8 @@
 
 .preset-button:hover {
     -fx-background-color: -blue-color;
+    -fx-border-color: -blue-color;
+    -fx-text-fill: white;
 }
 
 .primary-text, .primary-text SVGPath {
@@ -141,9 +196,9 @@
     -fx-font-weight: bolder;
 }
 
-.title {
-    -fx-font-size: 35px;
-}
+/* No ".title" rule here: "title" is the style class JavaFX gives the header of every TitledPane,
+   so a global rule silently restyles those controls. The application title that used to use it
+   is gone from the header. Use .title3 / .title4 below for headings. */
 
 .subtitle {
     -fx-font-size: 22px;
