@@ -2,12 +2,17 @@ package org.kadampa.festivalstreaming;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Properties;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,22 +30,26 @@ public class SettingsUtil {
     public static final String AUDIO_CHANNEL_STEREO = "Stereo";
     private static final String SETTINGS_FILE_EXTENSION = ".ini";
 
+    private static final String KEY_FORMAT = "settingsFormat";
+    private static final int FORMAT_V1 = 1; // languages numbered from 1, settings keyed by language name
+    private static final int FORMAT_V2 = 2; // one block per language, everything inside the block
+    private static final int FIRST_CONFIGURABLE_BLOCK = 4; // blocks 1 to 3 are the built-in languages
+    private static final int MAX_LANGUAGES = 64;
+
+    /** Everything the file says about one language. The block number is only cosmetic: the
+     *  settings are matched to a language by name, never by position. */
+    private record LanguageBlock(int n, String name, String nativeName, String code,
+                                 String audioSource, String channel,
+                                 String noiseReduction, String color) {}
+
     private static String sanitizeKey(String key) {
         // Replace any character that is not a letter, a digit, or a hyphen with an underscore
         return key.replaceAll("[^a-zA-Z0-9-]", "_");
     }
 
-    private static String findOriginalLanguageName(String sanitizedKey, Iterable<Settings.Language> languages) {
-        for (Settings.Language language : languages) {
-            if (sanitizeKey(language.name()).equals(sanitizedKey)) {
-                return language.name();
-            }
-        }
-        return null;
-    }
-
     public static void saveSettings(Settings settings, String key) {
         String sanitizedFileName = sanitizeKey(key) + SETTINGS_FILE_EXTENSION;
+        backupLegacyFile(sanitizedFileName);
         // Use LinkedHashMap to maintain insertion order for grouping
         Map<String, String> sortedProps = new LinkedHashMap<>();
 
@@ -80,43 +89,6 @@ public class SettingsUtil {
         sortedProps.put("meterThreshold.enMix.yellow", String.valueOf(settings.getEnMixMeterYellowThresholdDb()));
         sortedProps.put("meterThreshold.enMix.red", String.valueOf(settings.getEnMixMeterRedThresholdDb()));
 
-        // Group 5: Language-based settings (sorted by language order in Settings.LANGUAGES)
-        // Audio Sources
-        for (Settings.Language language : Settings.LANGUAGES) {
-                String languageName = language.name();
-                String audioSource = settings.getAudioSources().get(languageName);
-                if (audioSource != null) {
-                    sortedProps.put("audioSource." + sanitizeKey(languageName), audioSource);
-                }
-            }
-
-            // Audio Source Channels
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String languageName = language.name();
-                String audioChannel = settings.getAudioSourcesChannel().get(languageName);
-                if (audioChannel != null) {
-                    sortedProps.put("audioSourceChannel." + sanitizeKey(languageName), audioChannel);
-                }
-            }
-
-            // Noise Reduction Levels
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String languageName = language.name();
-                String noiseReduction = settings.getNoiseReductionLevel().get(languageName);
-                if (noiseReduction != null) {
-                    sortedProps.put("noiseReduction." + sanitizeKey(languageName), noiseReduction);
-                }
-            }
-
-            // Language Colors
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String languageName = language.name();
-                String color = settings.getLanguageColors().get(languageName);
-                if (color != null) {
-                    sortedProps.put("languageColor." + sanitizeKey(languageName), color);
-                }
-            }
-
         try (FileOutputStream out = new FileOutputStream(sanitizedFileName);
              OutputStreamWriter writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)) {
 
@@ -124,8 +96,11 @@ public class SettingsUtil {
             writer.write("#Festival Streaming Settings\n");
             writer.write("#Generated on: " + new java.util.Date() + "\n\n");
 
+            writer.write("# Settings file format version - do not edit.\n");
+            writer.write(KEY_FORMAT + "=" + FORMAT_V2 + "\n");
+
             // Write basic settings with section header
-            writer.write("# === VIDEO AND AUDIO SETTINGS ===\n");
+            writer.write("\n# === VIDEO AND AUDIO SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
                 new String[]{"videoSource", "videoBitrate", "videoBuffer", "audioBitrate", "audioBuffer", "fps", "videoPID", "pixFormat", "encoder"});
 
@@ -148,52 +123,76 @@ public class SettingsUtil {
                 new String[]{"meterThreshold.green", "meterThreshold.yellow", "meterThreshold.red",
                              "meterThreshold.enMix.green", "meterThreshold.enMix.yellow", "meterThreshold.enMix.red"});
 
-            writer.write("\n# === STREAMABLE LANGUAGES ===\n");
-            writer.write("# language.N.name / .nativeName / .code (ISO 639-2). N starts at 1 and must be contiguous.\n");
-            writer.write("# Prayers, \"English (for mix)\" and English are built in and cannot be changed here.\n");
-            writer.write("# Renaming a language resets its audio source, channel, noise reduction and color below.\n");
-            for (int i = 3; i < Settings.LANGUAGES.length; i++) {
-                Settings.Language language = Settings.LANGUAGES[i];
-                int n = i - 2;
-                writer.write(escapeKey("language." + n + ".name") + "=" + escapeValue(language.name()) + "\n");
-                writer.write(escapeKey("language." + n + ".nativeName") + "=" + escapeValue(language.nativeName()) + "\n");
-                writer.write(escapeKey("language." + n + ".code") + "=" + escapeValue(language.code()) + "\n");
-            }
-
-            writer.write("\n# === LANGUAGE AUDIO SOURCES ===\n");
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String propKey = "audioSource." + sanitizeKey(language.name());
-                if (sortedProps.containsKey(propKey)) {
-                    writer.write(escapeKey(propKey) + "=" + escapeValue(sortedProps.get(propKey)) + "\n");
-                }
-            }
-
-            writer.write("\n# === LANGUAGE AUDIO CHANNELS ===\n");
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String propKey = "audioSourceChannel." + sanitizeKey(language.name());
-                if (sortedProps.containsKey(propKey)) {
-                    writer.write(escapeKey(propKey) + "=" + escapeValue(sortedProps.get(propKey)) + "\n");
-                }
-            }
-
-            writer.write("\n# === LANGUAGE NOISE REDUCTION ===\n");
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String propKey = "noiseReduction." + sanitizeKey(language.name());
-                if (sortedProps.containsKey(propKey)) {
-                    writer.write(escapeKey(propKey) + "=" + escapeValue(sortedProps.get(propKey)) + "\n");
-                }
-            }
-
-            writer.write("\n# === LANGUAGE COLORS ===\n");
-            for (Settings.Language language : Settings.LANGUAGES) {
-                String propKey = "languageColor." + sanitizeKey(language.name());
-                if (sortedProps.containsKey(propKey)) {
-                    writer.write(escapeKey(propKey) + "=" + escapeValue(sortedProps.get(propKey)) + "\n");
-                }
+            writer.write("\n# === LANGUAGES ===\n");
+            writer.write("# One block per language. Blocks 1 to " + (FIRST_CONFIGURABLE_BLOCK - 1)
+                    + " are built in: their name and code cannot be changed here.\n");
+            writer.write("# From block " + FIRST_CONFIGURABLE_BLOCK
+                    + " on, language.N.name / .nativeName / .code (ISO 639-2) define the streamable languages.\n");
+            writer.write("# Deleting a block truncates the list at that point - renumber the blocks after it.\n");
+            writer.write("# Everything about a language lives in its own block, so renaming one keeps its settings.\n");
+            for (int i = 0; i < Settings.LANGUAGES.length; i++) {
+                writeLanguageBlock(writer, i + 1, Settings.LANGUAGES[i], settings);
             }
 
         } catch (IOException e) {
             logger.error("An error occurred", e);
+        }
+    }
+
+    /** Keeps a copy of the previous file the first time it is rewritten in the block format, so a
+     *  rollback to an older version of the application can be repaired by hand. */
+    private static void backupLegacyFile(String fileName) {
+        File settingsFile = new File(fileName);
+        if (!settingsFile.exists()) {
+            return;
+        }
+        Properties props = new Properties();
+        try (FileInputStream in = new FileInputStream(settingsFile);
+             InputStreamReader reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+            props.load(reader);
+        } catch (IOException e) {
+            logger.warn("Could not read {} before rewriting it: {}", fileName, e.getMessage());
+            return;
+        }
+        if (readFormat(props) >= FORMAT_V2) {
+            return;
+        }
+        File backup = new File(fileName + ".v" + FORMAT_V1 + ".bak");
+        try {
+            Files.copy(settingsFile.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            logger.info("Migrating {} from format {} to {}, previous file kept as {}",
+                    fileName, FORMAT_V1, FORMAT_V2, backup.getName());
+        } catch (IOException e) {
+            logger.warn("Could not back up {} before migrating it: {}", fileName, e.getMessage());
+        }
+    }
+
+    private static void writeLanguageBlock(OutputStreamWriter writer, int n, Settings.Language language, Settings settings) throws IOException {
+        String name = language.name();
+        boolean builtIn = n < FIRST_CONFIGURABLE_BLOCK;
+        writer.write("\n# --- " + n + ": " + name + (builtIn ? " (built in)" : "") + " ---\n");
+        String prefix = "language." + n + ".";
+        if (!builtIn) {
+            writeKey(writer, prefix + "name", name);
+            writeKey(writer, prefix + "nativeName", language.nativeName());
+            writeKey(writer, prefix + "code", language.code());
+        }
+        writeKeyIfPresent(writer, prefix + "audioSource", settings.getAudioSources().get(name));
+        writeKeyIfPresent(writer, prefix + "channel", settings.getAudioSourcesChannel().get(name));
+        // Prayers and the English mix have no noise reduction control in the settings tab
+        if (n > 2) {
+            writeKeyIfPresent(writer, prefix + "noiseReduction", settings.getNoiseReductionLevel().get(name));
+        }
+        writeKeyIfPresent(writer, prefix + "color", settings.getLanguageColors().get(name));
+    }
+
+    private static void writeKey(OutputStreamWriter writer, String key, String value) throws IOException {
+        writer.write(escapeKey(key) + "=" + escapeValue(value) + "\n");
+    }
+
+    private static void writeKeyIfPresent(OutputStreamWriter writer, String key, String value) throws IOException {
+        if (value != null && !value.isBlank()) {
+            writeKey(writer, key, value);
         }
     }
 
@@ -223,15 +222,141 @@ public class SettingsUtil {
         }
     }
 
-    private static List<Settings.Language> parseLanguages(Properties props) {
+    private static int readFormat(Properties props) {
+        String rawFormat = props.getProperty(KEY_FORMAT);
+        if (rawFormat == null) {
+            return FORMAT_V1; // every file written before the language blocks
+        }
+        try {
+            return Integer.parseInt(rawFormat.trim());
+        } catch (NumberFormatException e) {
+            // The key only exists because a format 2 or later writer put it there
+            logger.warn("Invalid {}='{}', reading the file as format {}", KEY_FORMAT, rawFormat, FORMAT_V2);
+            return FORMAT_V2;
+        }
+    }
+
+    private static List<LanguageBlock> parseV2Blocks(Properties props) {
+        List<LanguageBlock> blocks = new ArrayList<>();
+        String[] builtInNames = {Settings.PRAYERS_LANGUAGE, Settings.ENGLISH_FOR_MIX_LANGUAGE, Settings.ENGLISH_LANGUAGE};
+        for (int n = 1; n < FIRST_CONFIGURABLE_BLOCK; n++) {
+            warnIfBuiltInIdentityEdited(props, n);
+            blocks.add(readBlock(props, n, builtInNames[n - 1], null, null));
+        }
+        for (int n = FIRST_CONFIGURABLE_BLOCK; n < FIRST_CONFIGURABLE_BLOCK + MAX_LANGUAGES; n++) {
+            String name = props.getProperty("language." + n + ".name");
+            if (name == null) {
+                warnIfBlocksAfterTheGap(props, n);
+                return blocks;
+            }
+            blocks.add(readBlock(props, n, name.trim(),
+                    props.getProperty("language." + n + ".nativeName", "").trim(),
+                    props.getProperty("language." + n + ".code", "").trim()));
+        }
+        logger.warn("Only the first {} languages are read", MAX_LANGUAGES);
+        return blocks;
+    }
+
+    private static LanguageBlock readBlock(Properties props, int n, String name, String nativeName, String code) {
+        String prefix = "language." + n + ".";
+        return new LanguageBlock(n, name, nativeName, code,
+                props.getProperty(prefix + "audioSource"),
+                props.getProperty(prefix + "channel"),
+                props.getProperty(prefix + "noiseReduction"),
+                props.getProperty(prefix + "color"));
+    }
+
+    private static void warnIfBuiltInIdentityEdited(Properties props, int n) {
+        for (String field : new String[]{"name", "nativeName", "code"}) {
+            if (props.getProperty("language." + n + "." + field) != null) {
+                logger.warn("language.{}.{} is ignored: the first {} languages are built in and cannot be renamed",
+                        n, field, FIRST_CONFIGURABLE_BLOCK - 1);
+            }
+        }
+    }
+
+    /** The block scan stops at the first missing name, so a gap silently drops everything after it. */
+    private static void warnIfBlocksAfterTheGap(Properties props, int missingBlock) {
+        List<Integer> ignored = new ArrayList<>();
+        for (String propKey : props.stringPropertyNames()) {
+            if (propKey.startsWith("language.") && propKey.endsWith(".name")) {
+                try {
+                    int n = Integer.parseInt(propKey.substring("language.".length(), propKey.length() - ".name".length()));
+                    if (n > missingBlock) {
+                        ignored.add(n);
+                    }
+                } catch (NumberFormatException e) {
+                    // not a numbered language block, nothing to report
+                }
+            }
+        }
+        if (!ignored.isEmpty()) {
+            Collections.sort(ignored);
+            logger.warn("language.{}.name is missing, so the language blocks {} are ignored", missingBlock, ignored);
+        }
+    }
+
+    private static List<Settings.Language> toLanguages(List<LanguageBlock> blocks) {
         List<Settings.Language> languages = new ArrayList<>();
-        for (int i = 1; props.getProperty("language." + i + ".name") != null; i++) {
-            languages.add(new Settings.Language(
-                    props.getProperty("language." + i + ".name").trim(),
-                    props.getProperty("language." + i + ".nativeName", "").trim(),
-                    props.getProperty("language." + i + ".code", "").trim()));
+        for (LanguageBlock block : blocks) {
+            if (block.n() >= FIRST_CONFIGURABLE_BLOCK) {
+                languages.add(new Settings.Language(block.name(), block.nativeName(), block.code()));
+            }
         }
         return languages;
+    }
+
+    private static void applyBlocks(List<LanguageBlock> blocks, Settings settings) {
+        Set<String> knownNames = new HashSet<>();
+        for (Settings.Language language : Settings.LANGUAGES) {
+            knownNames.add(language.name());
+        }
+        Set<String> alreadyApplied = new HashSet<>();
+        for (LanguageBlock block : blocks) {
+            // A language that initLanguages dropped, and a duplicated one, keep no settings
+            if (!knownNames.contains(block.name()) || !alreadyApplied.add(block.name())) {
+                continue;
+            }
+            putIfPresent(settings.getAudioSources(), block.name(), block.audioSource());
+            putIfPresent(settings.getAudioSourcesChannel(), block.name(), block.channel());
+            putIfPresent(settings.getNoiseReductionLevel(), block.name(), block.noiseReduction());
+            putIfPresent(settings.getLanguageColors(), block.name(), block.color());
+        }
+    }
+
+    private static void putIfPresent(Map<String, String> target, String name, String value) {
+        if (value != null) {
+            target.put(name, value);
+        }
+    }
+
+    private static void loadGeneralSettings(Properties props, Settings settings) {
+        settings.setVideoSource(props.getProperty("videoSource", ""));
+        settings.setVideoBitrate(props.getProperty("videoBitrate", ""));
+        settings.setVideoBuffer(props.getProperty("videoBuffer", ""));
+        settings.setAudioBuffer(props.getProperty("audioBuffer", ""));
+        settings.setVideoPID(props.getProperty("videoPID", ""));
+        settings.setDelay(props.getProperty("delay", "0"));
+        settings.setEnMixDelay(props.getProperty("enMixDelay", "0"));
+        settings.setPixFormat(props.getProperty("pixFormat", ""));
+        settings.setTimeNeededToOpenADevice(props.getProperty("timeNeededToOpenADevice", "0"));
+        settings.setSrtDef(props.getProperty("srtDef", ""));
+        settings.setFileDef(props.getProperty("fileDef", ""));
+        settings.setEncoder(props.getProperty("encoder", ""));
+        settings.setOutputType(props.getProperty("outputType", ""));
+        settings.setSrtURL(props.getProperty("srtURL", ""));
+        settings.setOutputDirectory(props.getProperty("outputDirectory", ""));
+        settings.setAudioBitrate(props.getProperty("audioBitrate", ""));
+        settings.setFps(props.getProperty("fps", ""));
+        settings.setDevelopmentMode(Boolean.parseBoolean(props.getProperty("developmentMode", "false")));
+        settings.setLevelMeterWidthScale(parseDouble(props, "levelMeterWidthScale", settings.getLevelMeterWidthScale()));
+        settings.setLevelMeterHeightScale(parseDouble(props, "levelMeterHeightScale", settings.getLevelMeterHeightScale()));
+        settings.setMeterGreenThresholdDb(parseDouble(props, "meterThreshold.green", settings.getMeterGreenThresholdDb()));
+        settings.setMeterYellowThresholdDb(parseDouble(props, "meterThreshold.yellow", settings.getMeterYellowThresholdDb()));
+        settings.setMeterRedThresholdDb(parseDouble(props, "meterThreshold.red", settings.getMeterRedThresholdDb()));
+        settings.setEnMixMeterGreenThresholdDb(parseDouble(props, "meterThreshold.enMix.green", settings.getEnMixMeterGreenThresholdDb()));
+        settings.setEnMixMeterYellowThresholdDb(parseDouble(props, "meterThreshold.enMix.yellow", settings.getEnMixMeterYellowThresholdDb()));
+        settings.setEnMixMeterRedThresholdDb(parseDouble(props, "meterThreshold.enMix.red", settings.getEnMixMeterRedThresholdDb()));
     }
 
     public static Settings loadSettings(String key) {
@@ -251,86 +376,25 @@ public class SettingsUtil {
             // (Properties.load(InputStream) would decode it as ISO-8859-1)
             props.load(reader);
 
-            // The language list must be installed before creating the Settings instance
-            // and before resolving the per-language keys below
-            List<Settings.Language> configurableLanguages = parseLanguages(props);
-            if (configurableLanguages.isEmpty()) {
+            int format = readFormat(props);
+            List<LanguageBlock> blocks = format >= FORMAT_V2 ? parseV2Blocks(props) : List.of();
+            List<Settings.Language> configurableLanguages = format >= FORMAT_V2
+                    ? toLanguages(blocks)
+                    : V1.parseLanguages(props);
+            // Only a file predating the language blocks can be silent about its languages. In the
+            // block format an empty list means the user removed them, and must not be overruled.
+            if (configurableLanguages.isEmpty() && format < FORMAT_V2) {
                 configurableLanguages = Arrays.asList(Settings.DEFAULT_CONFIGURABLE_LANGUAGES);
             }
+            // The language list must be installed before creating the Settings instance
+            // and before resolving the per-language settings below
             Settings.initLanguages(configurableLanguages);
             settings = new Settings();
 
-            // Load basic settings
-            settings.setVideoSource(props.getProperty("videoSource", ""));
-            settings.setVideoBitrate(props.getProperty("videoBitrate", ""));
-            settings.setVideoBuffer(props.getProperty("videoBuffer", ""));
-            settings.setAudioBuffer(props.getProperty("audioBuffer", ""));
-            settings.setVideoPID(props.getProperty("videoPID", ""));
-            settings.setDelay(props.getProperty("delay", "0"));
-            settings.setEnMixDelay(props.getProperty("enMixDelay", "0"));
-            settings.setPixFormat(props.getProperty("pixFormat", ""));
-            settings.setTimeNeededToOpenADevice(props.getProperty("timeNeededToOpenADevice", "0"));
-            settings.setSrtDef(props.getProperty("srtDef", ""));
-            settings.setFileDef(props.getProperty("fileDef", ""));
-            settings.setEncoder(props.getProperty("encoder", ""));
-            settings.setOutputType(props.getProperty("outputType", ""));
-            settings.setSrtURL(props.getProperty("srtURL", ""));
-            settings.setOutputDirectory(props.getProperty("outputDirectory", ""));
-            settings.setAudioBitrate(props.getProperty("audioBitrate", ""));
-            settings.setFps(props.getProperty("fps", ""));
-            settings.setDevelopmentMode(Boolean.parseBoolean(props.getProperty("developmentMode", "false")));
-            settings.setLevelMeterWidthScale(parseDouble(props, "levelMeterWidthScale", settings.getLevelMeterWidthScale()));
-            settings.setLevelMeterHeightScale(parseDouble(props, "levelMeterHeightScale", settings.getLevelMeterHeightScale()));
-            settings.setMeterGreenThresholdDb(parseDouble(props, "meterThreshold.green", settings.getMeterGreenThresholdDb()));
-            settings.setMeterYellowThresholdDb(parseDouble(props, "meterThreshold.yellow", settings.getMeterYellowThresholdDb()));
-            settings.setMeterRedThresholdDb(parseDouble(props, "meterThreshold.red", settings.getMeterRedThresholdDb()));
-            settings.setEnMixMeterGreenThresholdDb(parseDouble(props, "meterThreshold.enMix.green", settings.getEnMixMeterGreenThresholdDb()));
-            settings.setEnMixMeterYellowThresholdDb(parseDouble(props, "meterThreshold.enMix.yellow", settings.getEnMixMeterYellowThresholdDb()));
-            settings.setEnMixMeterRedThresholdDb(parseDouble(props, "meterThreshold.enMix.red", settings.getEnMixMeterRedThresholdDb()));
-
-            // Load audio sources using language names
-            for (String propKey : props.stringPropertyNames()) {
-                if (propKey.startsWith("audioSource.")) {
-                    String sanitizedLanguageName = propKey.substring("audioSource.".length());
-                    String originalLanguageName = findOriginalLanguageName(sanitizedLanguageName, Arrays.asList(Settings.LANGUAGES));
-                    if (originalLanguageName != null) {
-                        settings.getAudioSources().put(originalLanguageName, props.getProperty(propKey));
-                    }
-                }
-            }
-
-            // Load audio source channels using language names
-            for (String propKey : props.stringPropertyNames()) {
-                if (propKey.startsWith("audioSourceChannel.")) {
-                    String sanitizedLanguageName = propKey.substring("audioSourceChannel.".length());
-                    String originalLanguageName = findOriginalLanguageName(sanitizedLanguageName, Arrays.asList(Settings.LANGUAGES));
-                    if (originalLanguageName != null) {
-                        settings.getAudioSourcesChannel().put(originalLanguageName, props.getProperty(propKey));
-                    }
-                }
-            }
-
-            // Load noise reduction levels using language names
-            for (String propKey : props.stringPropertyNames()) {
-                if (propKey.startsWith("noiseReduction.")) {
-                    String sanitizedLanguageName = propKey.substring("noiseReduction.".length());
-                    String originalLanguageName = findOriginalLanguageName(sanitizedLanguageName, Arrays.asList(Settings.LANGUAGES));
-                    if (originalLanguageName != null) {
-                        settings.getNoiseReductionLevel().put(originalLanguageName, props.getProperty(propKey));
-                    }
-                }
-            }
-
-            // Load language colors using language names
-            for (String propKey : props.stringPropertyNames()) {
-                if (propKey.startsWith("languageColor.")) {
-                    String sanitizedLanguageName = propKey.substring("languageColor.".length());
-                    String originalLanguageName = findOriginalLanguageName(sanitizedLanguageName, Arrays.asList(Settings.LANGUAGES));
-                    if (originalLanguageName != null) {
-                        settings.getLanguageColors().put(originalLanguageName, props.getProperty(propKey));
-                    }
-                }
-            }
+            loadGeneralSettings(props, settings);
+            // The two key spaces are disjoint, so each reader is a no-op on the other's format
+            V1.applyNameKeyedSettings(props, settings);
+            applyBlocks(blocks, settings);
 
         } catch (IOException e) {
             logger.error("An error occurred", e);
@@ -339,5 +403,52 @@ public class SettingsUtil {
         }
 
         return settings;
+    }
+
+    /** Reads the format that numbered the languages from 1 and kept their settings in separate
+     *  sections keyed by language name. Once every file in use has been rewritten by a Save, this
+     *  class, its two calls in loadSettings and the format branch above can all be deleted. */
+    private static final class V1 {
+
+        static List<Settings.Language> parseLanguages(Properties props) {
+            List<Settings.Language> languages = new ArrayList<>();
+            for (int i = 1; props.getProperty("language." + i + ".name") != null; i++) {
+                languages.add(new Settings.Language(
+                        props.getProperty("language." + i + ".name").trim(),
+                        props.getProperty("language." + i + ".nativeName", "").trim(),
+                        props.getProperty("language." + i + ".code", "").trim()));
+            }
+            return languages;
+        }
+
+        static void applyNameKeyedSettings(Properties props, Settings settings) {
+            apply(props, "audioSource.", settings.getAudioSources());
+            apply(props, "audioSourceChannel.", settings.getAudioSourcesChannel());
+            apply(props, "noiseReduction.", settings.getNoiseReductionLevel());
+            apply(props, "languageColor.", settings.getLanguageColors());
+        }
+
+        private static void apply(Properties props, String prefix, Map<String, String> target) {
+            for (String propKey : props.stringPropertyNames()) {
+                if (propKey.startsWith(prefix)) {
+                    String languageName = findOriginalLanguageName(propKey.substring(prefix.length()));
+                    if (languageName != null) {
+                        target.put(languageName, props.getProperty(propKey));
+                    }
+                }
+            }
+        }
+
+        /** The name was sanitized to build the key, which is not reversible: the only way back is
+         *  to sanitize every known name and compare. A renamed language therefore loses its
+         *  settings, which is what the block format fixes. */
+        private static String findOriginalLanguageName(String sanitizedKey) {
+            for (Settings.Language language : Settings.LANGUAGES) {
+                if (sanitizeKey(language.name()).equals(sanitizedKey)) {
+                    return language.name();
+                }
+            }
+            return null;
+        }
     }
 }
