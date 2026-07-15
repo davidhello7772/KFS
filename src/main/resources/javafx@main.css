@@ -92,6 +92,26 @@
     -fx-background-color: -grey-color-hover;
 }
 
+.preset-button {
+    -fx-background-radius: 4;
+    -fx-background-color: -grey-color;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-pref-width: 26px;
+    -fx-min-width: 26px;
+    -fx-max-width: 26px;
+    -fx-pref-height: 24px;
+    -fx-min-height: 24px;
+    -fx-max-height: 24px;
+    -fx-padding: 0;
+    -fx-alignment: center;
+    -fx-cursor: hand;
+}
+
+.preset-button:hover {
+    -fx-background-color: -blue-color;
+}
+
 .primary-text, .primary-text SVGPath {
     -fx-text-fill: -blue-color;
     -fx-fill: -blue-color;

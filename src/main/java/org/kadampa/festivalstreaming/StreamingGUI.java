@@ -764,6 +764,7 @@ public class StreamingGUI extends Application {
         // Create an HBox to hold both labels
         HBox noiseReductionLabelHBox = new HBox(1,noiseReductionLabel,noiseReductionInfoLabel);  // 5 is the spacing between the labels
         inputGrid.add(noiseReductionLabelHBox, 3, row);
+        inputGrid.add(buildNoiseReductionPresets(), 2, row);
         row++;
         for (int i = 2; i < Settings.LANGUAGES.length; i++) {
             addLanguageRow(inputGrid, row, Settings.LANGUAGES[i].name() + ":", inputAudioSources[i], inputAudioSourcesChannel[i], inputNoiseReductionValues[i], Settings.LANGUAGES[i].name());
@@ -1152,6 +1153,33 @@ public class StreamingGUI extends Application {
             }
         });
 
+    }
+
+    /**
+     * One-click presets applying a noise reduction level to every language except the reference
+     * one (English). Placed on the "Noise reduction" header row, beside the column it drives.
+     */
+    private HBox buildNoiseReductionPresets() {
+        HBox presetBox = new HBox(4, new Label("All:"));
+        presetBox.setAlignment(Pos.CENTER_RIGHT);
+        for (String level : new String[]{"0", "1", "2"}) {
+            Button presetButton = new Button(level);
+            presetButton.getStyleClass().add("preset-button");
+            Tooltip presetTooltip = new Tooltip("Set the noise reduction of all the languages except "
+                    + Settings.ENGLISH_LANGUAGE + " to " + level);
+            presetTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+            presetTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+            presetTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+            presetTooltip.getStyleClass().add("tooltip");
+            presetButton.setTooltip(presetTooltip);
+            presetButton.setOnAction(e -> {
+                for (int i = 3; i < Settings.LANGUAGES.length; i++) {
+                    inputNoiseReductionValues[i].setValue(level);
+                }
+            });
+            presetBox.getChildren().add(presetButton);
+        }
+        return presetBox;
     }
 
     private void addLanguageRow(GridPane gridPane, int rowIndex, String labelText, ComboBox<String> audioInput, ComboBox<String> audioInputChannel, ComboBox<String> noiseReductionValue, String languageKey) {
