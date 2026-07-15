@@ -1140,7 +1140,7 @@ public class StreamingGUI extends Application {
         primaryStage.show();
         applySettings();
         applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),isTheOutputAFile.get());
-        vuMeterPanel = new LevelMeterPanel(inputAudioSources, inputAudioSourcesChannel, settings.getLanguageColors());
+        vuMeterPanel = new LevelMeterPanel(inputAudioSources, inputAudioSourcesChannel, settings);
         volumeMonitor = new VolumeMonitor(vuMeterPanel.getVuMeters());
 
         // Start/stop VolumeMonitor based on LevelMeterPanel visibility

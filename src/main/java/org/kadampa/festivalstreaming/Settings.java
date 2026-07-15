@@ -119,6 +119,16 @@ public class Settings implements Serializable {
     private String fps; // Add FPS field
     private String enMixDelay;
     private boolean developmentMode = false;
+    private double levelMeterWidthScale = 1.0;
+    private double levelMeterHeightScale = 1.0;
+    // Level meter zone thresholds (dB): grey below green, then green, yellow and red zones
+    private double meterGreenThresholdDb = -9.0;
+    private double meterYellowThresholdDb = 6.0;
+    private double meterRedThresholdDb = 9.0;
+    // "English (for mix)" monitors a deliberately low signal, so it has its own thresholds
+    private double enMixMeterGreenThresholdDb = -28.0;
+    private double enMixMeterYellowThresholdDb = -20.0;
+    private double enMixMeterRedThresholdDb = 9.0;
 
     public Map<String, String> getAudioSources() {
         return audioSources;
@@ -276,5 +286,69 @@ public class Settings implements Serializable {
 
     public void setDevelopmentMode(boolean developmentMode) {
         this.developmentMode = developmentMode;
+    }
+
+    public double getLevelMeterWidthScale() {
+        return levelMeterWidthScale;
+    }
+
+    public void setLevelMeterWidthScale(double levelMeterWidthScale) {
+        this.levelMeterWidthScale = levelMeterWidthScale;
+    }
+
+    public double getLevelMeterHeightScale() {
+        return levelMeterHeightScale;
+    }
+
+    public void setLevelMeterHeightScale(double levelMeterHeightScale) {
+        this.levelMeterHeightScale = levelMeterHeightScale;
+    }
+
+    public double getMeterGreenThresholdDb() {
+        return meterGreenThresholdDb;
+    }
+
+    public void setMeterGreenThresholdDb(double meterGreenThresholdDb) {
+        this.meterGreenThresholdDb = meterGreenThresholdDb;
+    }
+
+    public double getMeterYellowThresholdDb() {
+        return meterYellowThresholdDb;
+    }
+
+    public void setMeterYellowThresholdDb(double meterYellowThresholdDb) {
+        this.meterYellowThresholdDb = meterYellowThresholdDb;
+    }
+
+    public double getMeterRedThresholdDb() {
+        return meterRedThresholdDb;
+    }
+
+    public void setMeterRedThresholdDb(double meterRedThresholdDb) {
+        this.meterRedThresholdDb = meterRedThresholdDb;
+    }
+
+    public double getEnMixMeterGreenThresholdDb() {
+        return enMixMeterGreenThresholdDb;
+    }
+
+    public void setEnMixMeterGreenThresholdDb(double enMixMeterGreenThresholdDb) {
+        this.enMixMeterGreenThresholdDb = enMixMeterGreenThresholdDb;
+    }
+
+    public double getEnMixMeterYellowThresholdDb() {
+        return enMixMeterYellowThresholdDb;
+    }
+
+    public void setEnMixMeterYellowThresholdDb(double enMixMeterYellowThresholdDb) {
+        this.enMixMeterYellowThresholdDb = enMixMeterYellowThresholdDb;
+    }
+
+    public double getEnMixMeterRedThresholdDb() {
+        return enMixMeterRedThresholdDb;
+    }
+
+    public void setEnMixMeterRedThresholdDb(double enMixMeterRedThresholdDb) {
+        this.enMixMeterRedThresholdDb = enMixMeterRedThresholdDb;
     }
 }

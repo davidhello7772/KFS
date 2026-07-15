@@ -69,6 +69,16 @@ public class SettingsUtil {
 
         // Group 4: System settings
         sortedProps.put("developmentMode", String.valueOf(settings.isDevelopmentMode()));
+        sortedProps.put("levelMeterWidthScale", String.valueOf(settings.getLevelMeterWidthScale()));
+        sortedProps.put("levelMeterHeightScale", String.valueOf(settings.getLevelMeterHeightScale()));
+
+        // Group 5: Level meter zone thresholds (dB)
+        sortedProps.put("meterThreshold.green", String.valueOf(settings.getMeterGreenThresholdDb()));
+        sortedProps.put("meterThreshold.yellow", String.valueOf(settings.getMeterYellowThresholdDb()));
+        sortedProps.put("meterThreshold.red", String.valueOf(settings.getMeterRedThresholdDb()));
+        sortedProps.put("meterThreshold.enMix.green", String.valueOf(settings.getEnMixMeterGreenThresholdDb()));
+        sortedProps.put("meterThreshold.enMix.yellow", String.valueOf(settings.getEnMixMeterYellowThresholdDb()));
+        sortedProps.put("meterThreshold.enMix.red", String.valueOf(settings.getEnMixMeterRedThresholdDb()));
 
         // Group 5: Language-based settings (sorted by language order in Settings.LANGUAGES)
         // Audio Sources
@@ -129,7 +139,14 @@ public class SettingsUtil {
 
             writer.write("\n# === SYSTEM SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"developmentMode"});
+                new String[]{"developmentMode", "levelMeterWidthScale", "levelMeterHeightScale"});
+
+            writer.write("\n# === LEVEL METER ZONE THRESHOLDS (dB) ===\n");
+            writer.write("# Below green = grey zone, then green, yellow and red zones.\n");
+            writer.write("# The enMix.* thresholds apply to the \"English (for mix)\" meter only.\n");
+            writePropertiesSection(writer, sortedProps,
+                new String[]{"meterThreshold.green", "meterThreshold.yellow", "meterThreshold.red",
+                             "meterThreshold.enMix.green", "meterThreshold.enMix.yellow", "meterThreshold.enMix.red"});
 
             writer.write("\n# === STREAMABLE LANGUAGES ===\n");
             writer.write("# language.N.name / .nativeName / .code (ISO 639-2). N starts at 1 and must be contiguous.\n");
@@ -197,6 +214,15 @@ public class SettingsUtil {
         return value.replaceAll("(\\\\)", "\\\\$1").replaceAll("\n", "\\\\n").replaceAll("\r", "\\\\r");
     }
 
+    private static double parseDouble(Properties props, String key, double defaultValue) {
+        try {
+            return Double.parseDouble(props.getProperty(key, String.valueOf(defaultValue)));
+        } catch (NumberFormatException e) {
+            logger.warn("Invalid value for {}, falling back to {}", key, defaultValue);
+            return defaultValue;
+        }
+    }
+
     private static List<Settings.Language> parseLanguages(Properties props) {
         List<Settings.Language> languages = new ArrayList<>();
         for (int i = 1; props.getProperty("language." + i + ".name") != null; i++) {
@@ -253,6 +279,14 @@ public class SettingsUtil {
             settings.setAudioBitrate(props.getProperty("audioBitrate", ""));
             settings.setFps(props.getProperty("fps", ""));
             settings.setDevelopmentMode(Boolean.parseBoolean(props.getProperty("developmentMode", "false")));
+            settings.setLevelMeterWidthScale(parseDouble(props, "levelMeterWidthScale", settings.getLevelMeterWidthScale()));
+            settings.setLevelMeterHeightScale(parseDouble(props, "levelMeterHeightScale", settings.getLevelMeterHeightScale()));
+            settings.setMeterGreenThresholdDb(parseDouble(props, "meterThreshold.green", settings.getMeterGreenThresholdDb()));
+            settings.setMeterYellowThresholdDb(parseDouble(props, "meterThreshold.yellow", settings.getMeterYellowThresholdDb()));
+            settings.setMeterRedThresholdDb(parseDouble(props, "meterThreshold.red", settings.getMeterRedThresholdDb()));
+            settings.setEnMixMeterGreenThresholdDb(parseDouble(props, "meterThreshold.enMix.green", settings.getEnMixMeterGreenThresholdDb()));
+            settings.setEnMixMeterYellowThresholdDb(parseDouble(props, "meterThreshold.enMix.yellow", settings.getEnMixMeterYellowThresholdDb()));
+            settings.setEnMixMeterRedThresholdDb(parseDouble(props, "meterThreshold.enMix.red", settings.getEnMixMeterRedThresholdDb()));
 
             // Load audio sources using language names
             for (String propKey : props.stringPropertyNames()) {

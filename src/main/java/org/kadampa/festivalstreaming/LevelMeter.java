@@ -36,9 +36,9 @@ public class LevelMeter {
     private static final Color COLOR_SHADOW = Color.rgb(0, 0, 0, 0.4);
 
     // Meter Bar Colors
-    private static final Color COLOR_METER_BLUE = Color.web("#C0C0C0");
-    private static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
-    private static final Color COLOR_METER_YELLOW = Color.ORANGE;
+    static final Color COLOR_METER_BLUE = Color.web("#C0C0C0");
+    static final Color COLOR_METER_GREEN = Color.LIMEGREEN;
+    static final Color COLOR_METER_YELLOW = Color.ORANGE;
     public static final Color COLOR_METER_RED = Color.RED;
     private static final Color COLOR_METER_PEAK = Color.rgb(255, 100, 100);
     public static final Color COLOR_WARNING_HIGH = Color.rgb(255, 140, 0); // Bright Orange
@@ -90,11 +90,11 @@ public class LevelMeter {
     private PauseTransition peakHoldTimer;
 
     //<editor-fold desc="Meter Constants">
-    private static final double METER_CEILING_DB = 12.0;
-    private static final double MIN_DB = -40.0;
-    private final double greenThresholdDb;
-    private final double yellowThresholdDb;
-    private final double redThresholdDb;
+    static final double METER_CEILING_DB = 12.0;
+    static final double MIN_DB = -40.0;
+    private double greenThresholdDb;
+    private double yellowThresholdDb;
+    private double redThresholdDb;
     //</editor-fold>
 
     private static final double METER_HEIGHT = 300;
@@ -124,11 +124,12 @@ public class LevelMeter {
     private final BooleanProperty monitoringActive = new SimpleBooleanProperty(false);
 
     private ArrayList<Rectangle> meterBoxes;
+    private ArrayList<Rectangle> meterBackgroundBoxes;
     private static final int NUM_BOXES = 40; // Total number of discrete boxes
     private static final double BOX_HEIGHT = (METER_HEIGHT - (NUM_BOXES - 1) * 2) / NUM_BOXES; // 2px gap between boxes
     private static final double BOX_GAP = 2.0; // Gap between boxes
 
-    public LevelMeter(String language, Mixer.Info mixerInfo, String channel, Color backgroundColor, MonitorToggleListener listener) {
+    public LevelMeter(String language, Mixer.Info mixerInfo, String channel, Color backgroundColor, MonitorToggleListener listener, Settings settings) {
         this.language = language;
         this.mixerInfo = mixerInfo;
         this.channel = channel;
@@ -136,13 +137,14 @@ public class LevelMeter {
         this.monitorToggleListener = listener;
 
         if ("English (for mix)".equals(language)) {
-            greenThresholdDb = -28.0;
-            yellowThresholdDb = -20.0;
+            greenThresholdDb = settings.getEnMixMeterGreenThresholdDb();
+            yellowThresholdDb = settings.getEnMixMeterYellowThresholdDb();
+            redThresholdDb = settings.getEnMixMeterRedThresholdDb();
         } else {
-            greenThresholdDb = -9.0;
-            yellowThresholdDb = 6.0;
+            greenThresholdDb = settings.getMeterGreenThresholdDb();
+            yellowThresholdDb = settings.getMeterYellowThresholdDb();
+            redThresholdDb = settings.getMeterRedThresholdDb();
         }
-        redThresholdDb = 9.0;
 
         this.view = new VBox();
         this.view.setAlignment(Pos.CENTER);
@@ -152,7 +154,7 @@ public class LevelMeter {
         VBox infoBox = createInfoSection();
 
         view.setSpacing(0);
-        view.setPadding(new Insets(16));
+        view.setPadding(new Insets(12, 16, 12, 16));
         view.setAlignment(Pos.CENTER);
         view.setPrefWidth(280);
         view.setMinHeight(METER_HEIGHT + 120);
@@ -191,7 +193,7 @@ public class LevelMeter {
         VBox headerBox = new VBox();
         headerBox.setAlignment(Pos.CENTER);
         headerBox.setSpacing(8);
-        headerBox.setPadding(new Insets(0, 0, 20, 0));
+        headerBox.setPadding(new Insets(0, 0, 10, 0));
 
         HBox titleRow = new HBox();
         titleRow.setAlignment(Pos.CENTER);
@@ -265,14 +267,14 @@ public class LevelMeter {
         VBox infoBox = new VBox();
         infoBox.setAlignment(Pos.CENTER);
         infoBox.setSpacing(12);
-        infoBox.setPadding(new Insets(20, 0, 0, 0));
+        infoBox.setPadding(new Insets(12, 0, 0, 0));
 
         dbLabel = new Label(String.format("%.1f dB", MIN_DB));
         dbLabel.setFont(Font.font("System", FontWeight.BOLD, 15));
         dbLabel.setTextFill(COLOR_TEXT_PRIMARY);
         dbLabel.setAlignment(Pos.CENTER);
         dbLabel.setMinWidth(150);
-        dbLabel.setStyle("-fx-background-color: " + toRgbaString(COLOR_BACKGROUND_DARK_TRANSPARENT) + "; -fx-background-radius: 25; -fx-padding: 8 40; -fx-border-color: " + toRgbaString(COLOR_BORDER) + "; -fx-border-width: 1; -fx-border-radius: 25;");
+        dbLabel.setStyle("-fx-background-color: " + toRgbaString(COLOR_BACKGROUND_DARK_TRANSPARENT) + "; -fx-background-radius: 25; -fx-padding: 6 40; -fx-border-color: " + toRgbaString(COLOR_BORDER) + "; -fx-border-width: 1; -fx-border-radius: 25;");
         addTextShadow(dbLabel);
 
         monitorButton = new Button();
@@ -404,6 +406,7 @@ public class LevelMeter {
 
         // Initialize the discrete boxes
         meterBoxes = new ArrayList<>();
+        meterBackgroundBoxes = new ArrayList<>();
 
         for (int i = 0; i < NUM_BOXES; i++) {
             // Calculate position from bottom to top
@@ -417,6 +420,7 @@ public class LevelMeter {
             bgBox.setArcHeight(4);
             bgBox.setFill(getBackgroundColorForBox(i));
             bgBox.setOpacity(0.3);
+            meterBackgroundBoxes.add(bgBox);
             meterPane.getChildren().add(bgBox);
 
             // Active box (lit up when signal reaches this level)
@@ -487,6 +491,19 @@ public class LevelMeter {
         meterPane.getChildren().add(peakHoldBar);
 
         return meterPane;
+    }
+
+    /**
+     * Changes the zone thresholds at runtime. The active boxes and status indicator pick up
+     * the new values on the next animation frame; only the static background tint needs a refresh.
+     */
+    public void setThresholds(double greenDb, double yellowDb, double redDb) {
+        this.greenThresholdDb = greenDb;
+        this.yellowThresholdDb = yellowDb;
+        this.redThresholdDb = redDb;
+        for (int i = 0; i < meterBackgroundBoxes.size(); i++) {
+            meterBackgroundBoxes.get(i).setFill(getBackgroundColorForBox(i));
+        }
     }
 
     // Helper method to determine color for each box based on its position
