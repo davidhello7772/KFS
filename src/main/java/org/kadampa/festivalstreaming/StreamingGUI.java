@@ -92,18 +92,7 @@ public class StreamingGUI extends Application {
     private boolean manualScroll = false;
     private boolean doWeAutomaticallyScrollAtBottom = true;
     private final Label videoPID = new Label("");
-    private final Label englishPID = new Label("");
-    private final Label spanishPID = new Label("");
-    private final Label frenchPID = new Label("");
-    private final Label portuguesePID = new Label("");
-    private final Label germanPID = new Label("");
-    private final Label cantonesePID = new Label("");
-    private final Label mandarinPID = new Label("");
-    private final Label vietnamesePID = new Label("");
-    private final Label italianPID = new Label("");
-    private final Label finishPID = new Label("");
-    private final Label greekPID = new Label("");
-    private final Label extraLanguagePID = new Label("");
+    private final List<Label> audioPidLabels = new ArrayList<>();
     private final Label nowPlayingLabel = new Label("");
     private final HBox nowPlayingBox = new HBox(nowPlayingLabel);
     private final BooleanProperty isTheOutputAFile = new SimpleBooleanProperty();
@@ -133,10 +122,17 @@ public class StreamingGUI extends Application {
     private static final Logger logger = LoggerFactory.getLogger(StreamingGUI.class);
 
     public StreamingGUI() {
-        int MAX_NUMBER_OF_LANGUAGES = 12;
-        inputAudioSources = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
-        inputAudioSourcesChannel = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
-        inputNoiseReductionValues = new ComboBox[MAX_NUMBER_OF_LANGUAGES];
+        // Load settings first: it installs the language list (possibly defined in the .ini file)
+        // that determines the size of the input arrays below
+        settings = SettingsUtil.loadSettings("settings");
+        // Check for development mode system property
+        if (Boolean.parseBoolean(System.getProperty("kfs.developmentMode"))) {
+            settings.setDevelopmentMode(true);
+        }
+        int numberOfLanguages = Settings.LANGUAGES.length;
+        inputAudioSources = new ComboBox[numberOfLanguages];
+        inputAudioSourcesChannel = new ComboBox[numberOfLanguages];
+        inputNoiseReductionValues = new ComboBox[numberOfLanguages];
 
         for (int i = 0; i < inputAudioSources.length; i++) {
             inputAudioSources[i] = new ComboBox<>();
@@ -361,12 +357,6 @@ public class StreamingGUI extends Application {
         List<Webcam> webcams = Webcam.getWebcams();
         for (Webcam webcam : webcams) {
             this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
-        }
-        // Load settings
-        settings = SettingsUtil.loadSettings("settings");
-        // Check for development mode system property
-        if (Boolean.parseBoolean(System.getProperty("kfs.developmentMode"))) {
-            settings.setDevelopmentMode(true);
         }
     }
 
@@ -600,48 +590,24 @@ public class StreamingGUI extends Application {
         pidInfo.setStyle("-fx-font-weight: bold;");
         infoVBox.getChildren().add(pidInfo);
         infoVBox.getChildren().add(videoPID);
-        infoVBox.getChildren().add(englishPID);
-        infoVBox.getChildren().add(spanishPID);
-        infoVBox.getChildren().add(frenchPID);
-        infoVBox.getChildren().add(portuguesePID);
-        infoVBox.getChildren().add(germanPID);
-        infoVBox.getChildren().add(cantonesePID);
-        infoVBox.getChildren().add(mandarinPID);
-        infoVBox.getChildren().add(vietnamesePID);
-        infoVBox.getChildren().add(italianPID);
-        infoVBox.getChildren().add(finishPID);
-        infoVBox.getChildren().add(greekPID);
-        infoVBox.getChildren().add(extraLanguagePID);
+        audioPidLabels.clear();
+        for (int i = 2; i < Settings.LANGUAGES.length; i++) {
+            Label audioPidLabel = new Label("");
+            audioPidLabels.add(audioPidLabel);
+            infoVBox.getChildren().add(audioPidLabel);
+        }
         return infoVBox;
     }
 
     private void displayPIDInfo() {
         int pidVideo = Integer.parseInt(inputVideoPid.getText());
         videoPID.setText("PID Video: " + pidVideo);
-        int currentAudioPID =  pidVideo+1;
-        englishPID.setText("PID " + Settings.LANGUAGES[2].name() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        spanishPID.setText("PID " + Settings.LANGUAGES[3].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        frenchPID.setText("PID " + Settings.LANGUAGES[4].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        portuguesePID.setText("PID " + Settings.LANGUAGES[5].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        germanPID.setText("PID " + Settings.LANGUAGES[6].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        cantonesePID.setText("PID " + Settings.LANGUAGES[7].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        mandarinPID.setText("PID " + Settings.LANGUAGES[8].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        vietnamesePID.setText("PID " + Settings.LANGUAGES[9].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        italianPID.setText("PID " + Settings.LANGUAGES[10].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        finishPID.setText("PID Finish: " + currentAudioPID);
-        currentAudioPID ++;
-        greekPID.setText("PID " + Settings.LANGUAGES[11].nativeName() + ": " + currentAudioPID);
-        currentAudioPID ++;
-        extraLanguagePID.setText("PID extraLanguage: " + currentAudioPID);
+        int currentAudioPID = pidVideo + 1;
+        for (int i = 2; i < Settings.LANGUAGES.length; i++) {
+            String displayName = i == 2 ? Settings.LANGUAGES[i].name() : Settings.LANGUAGES[i].nativeName();
+            audioPidLabels.get(i - 2).setText("PID " + displayName + ": " + currentAudioPID);
+            currentAudioPID++;
+        }
     }
 
     private Node buildTabControlConsole() {

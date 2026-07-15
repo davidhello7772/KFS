@@ -6,6 +6,8 @@ import java.util.Properties;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -129,6 +131,18 @@ public class SettingsUtil {
             writePropertiesSection(writer, sortedProps,
                 new String[]{"developmentMode"});
 
+            writer.write("\n# === STREAMABLE LANGUAGES ===\n");
+            writer.write("# language.N.name / .nativeName / .code (ISO 639-2). N starts at 1 and must be contiguous.\n");
+            writer.write("# Prayers, \"English (for mix)\" and English are built in and cannot be changed here.\n");
+            writer.write("# Renaming a language resets its audio source, channel, noise reduction and color below.\n");
+            for (int i = 3; i < Settings.LANGUAGES.length; i++) {
+                Settings.Language language = Settings.LANGUAGES[i];
+                int n = i - 2;
+                writer.write(escapeKey("language." + n + ".name") + "=" + escapeValue(language.name()) + "\n");
+                writer.write(escapeKey("language." + n + ".nativeName") + "=" + escapeValue(language.nativeName()) + "\n");
+                writer.write(escapeKey("language." + n + ".code") + "=" + escapeValue(language.code()) + "\n");
+            }
+
             writer.write("\n# === LANGUAGE AUDIO SOURCES ===\n");
             for (Settings.Language language : Settings.LANGUAGES) {
                 String propKey = "audioSource." + sanitizeKey(language.name());
@@ -183,18 +197,42 @@ public class SettingsUtil {
         return value.replaceAll("(\\\\)", "\\\\$1").replaceAll("\n", "\\\\n").replaceAll("\r", "\\\\r");
     }
 
+    private static List<Settings.Language> parseLanguages(Properties props) {
+        List<Settings.Language> languages = new ArrayList<>();
+        for (int i = 1; props.getProperty("language." + i + ".name") != null; i++) {
+            languages.add(new Settings.Language(
+                    props.getProperty("language." + i + ".name").trim(),
+                    props.getProperty("language." + i + ".nativeName", "").trim(),
+                    props.getProperty("language." + i + ".code", "").trim()));
+        }
+        return languages;
+    }
+
     public static Settings loadSettings(String key) {
         String sanitizedFileName = sanitizeKey(key) + SETTINGS_FILE_EXTENSION;
         File settingsFile = new File(sanitizedFileName);
-        Settings settings = new Settings();
 
         if (!settingsFile.exists()) {
-            return settings;
+            Settings.initLanguages(Arrays.asList(Settings.DEFAULT_CONFIGURABLE_LANGUAGES));
+            return new Settings();
         }
 
         Properties props = new Properties();
-        try (FileInputStream in = new FileInputStream(settingsFile)) {
-            props.load(in);
+        Settings settings;
+        try (FileInputStream in = new FileInputStream(settingsFile);
+             InputStreamReader reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+            // The file is written in UTF-8, so it must be read with a UTF-8 reader
+            // (Properties.load(InputStream) would decode it as ISO-8859-1)
+            props.load(reader);
+
+            // The language list must be installed before creating the Settings instance
+            // and before resolving the per-language keys below
+            List<Settings.Language> configurableLanguages = parseLanguages(props);
+            if (configurableLanguages.isEmpty()) {
+                configurableLanguages = Arrays.asList(Settings.DEFAULT_CONFIGURABLE_LANGUAGES);
+            }
+            Settings.initLanguages(configurableLanguages);
+            settings = new Settings();
 
             // Load basic settings
             settings.setVideoSource(props.getProperty("videoSource", ""));
@@ -262,6 +300,8 @@ public class SettingsUtil {
 
         } catch (IOException e) {
             logger.error("An error occurred", e);
+            Settings.initLanguages(Arrays.asList(Settings.DEFAULT_CONFIGURABLE_LANGUAGES));
+            settings = new Settings();
         }
 
         return settings;

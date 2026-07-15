@@ -2,11 +2,21 @@ package org.kadampa.festivalstreaming;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Settings implements Serializable {
+
+    private static final Logger logger = LoggerFactory.getLogger(Settings.class);
 
     public static final boolean DEVELOPMENT_MODE = false;
 
@@ -24,10 +34,16 @@ public class Settings implements Serializable {
     public static final String PRAYERS_LANGUAGE = "Prayers";
     public static final String ENGLISH_FOR_MIX_LANGUAGE = "English (for mix)";
     public static final String ENGLISH_LANGUAGE = "English"; // The reference language
-    public static final Language[] LANGUAGES = {
+
+    // The first three languages are built in and cannot be redefined in the settings file
+    private static final Language[] FIXED_LANGUAGES = {
             new Language(PRAYERS_LANGUAGE),
             new Language(ENGLISH_FOR_MIX_LANGUAGE),
-            new Language(ENGLISH_LANGUAGE, ENGLISH_LANGUAGE, "eng"),
+            new Language(ENGLISH_LANGUAGE, ENGLISH_LANGUAGE, "eng")
+    };
+
+    // Used when the settings file does not define any language
+    public static final Language[] DEFAULT_CONFIGURABLE_LANGUAGES = {
             new Language("Spanish", "Español", "spa"),
             new Language("French", "Français", "fra"),
             new Language("Portuguese", "Português", "por"),
@@ -36,8 +52,42 @@ public class Settings implements Serializable {
             new Language("Mandarin", "普通话", "chi"),
             new Language("Vietnamese", "Tiếng_Việt", "vie"),
             new Language("Italian", "Italiano", "ita"),
-            new Language("Greek", "Ελληνικά", "grc")
+            new Language("Greek", "Ελληνικά", "grc"),
+            new Language("Finnish", "Suomi", "fin"),
+            new Language("Dutch", "Nederlands", "nld")
     };
+
+    // Replaced once at startup by initLanguages(), before any Settings instance is created
+    public static Language[] LANGUAGES = concat(FIXED_LANGUAGES, DEFAULT_CONFIGURABLE_LANGUAGES);
+
+    public static void initLanguages(List<Language> configurableLanguages) {
+        List<Language> result = new ArrayList<>(Arrays.asList(FIXED_LANGUAGES));
+        Set<String> usedNames = new HashSet<>();
+        for (Language fixed : FIXED_LANGUAGES) {
+            usedNames.add(fixed.name());
+        }
+        for (Language language : configurableLanguages) {
+            if (language.name() == null || language.name().isBlank()
+                    || language.code() == null || language.code().isBlank()) {
+                logger.warn("Ignoring language with missing name or code: {}", language);
+                continue;
+            }
+            if (!usedNames.add(language.name())) {
+                logger.warn("Ignoring duplicated language name: {}", language.name());
+                continue;
+            }
+            String nativeName = (language.nativeName() == null || language.nativeName().isBlank())
+                    ? language.name() : language.nativeName();
+            result.add(new Language(language.name(), nativeName, language.code()));
+        }
+        LANGUAGES = result.toArray(new Language[0]);
+    }
+
+    private static Language[] concat(Language[] first, Language[] second) {
+        Language[] result = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, result, first.length, second.length);
+        return result;
+    }
 
     public Settings() {
         // Initialize default colors for languages
