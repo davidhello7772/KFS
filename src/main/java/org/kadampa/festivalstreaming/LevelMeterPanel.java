@@ -1,5 +1,6 @@
 package org.kadampa.festivalstreaming;
 
+import javafx.animation.AnimationTimer;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.SimpleDoubleProperty;
 import javafx.geometry.Insets;
@@ -39,6 +40,23 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
 
     private final Map<String, LevelMeter> vuMeters = new HashMap<>();
     private final Settings settings;
+
+    // One shared timer drives every meter at ~30fps (every other JavaFX pulse):
+    // twelve independent 60fps AnimationTimers doubled the GPU work for no visual gain
+    private final AnimationTimer meterTicker = new AnimationTimer() {
+        private long lastTick = 0;
+
+        @Override
+        public void handle(long now) {
+            if (now - lastTick < 30_000_000L) {
+                return;
+            }
+            lastTick = now;
+            for (LevelMeter vuMeter : vuMeters.values()) {
+                vuMeter.tick(now);
+            }
+        }
+    };
     private final ScaleStepper widthStepper;
     private final ScaleStepper heightStepper;
     private final List<DbStepper> zoneSteppers = new ArrayList<>();
@@ -239,9 +257,27 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
         refreshAllZoneSteppers();
         applyThresholdsToMeters();
 
-        this.setOnShowing(event -> startAllMeters());
-        this.setOnHidden(event -> stopAllMeters());
+        this.setOnShowing(event -> {
+            startAllMeters();
+            meterTicker.start();
+        });
+        this.setOnHidden(event -> {
+            meterTicker.stop();
+            stopAllMeters();
+        });
         this.setOnCloseRequest(event -> stopAllMonitoring());
+        // Don't burn GPU on meter animation while the window is minimized;
+        // audio listeners stay registered so volume warnings keep working
+        this.iconifiedProperty().addListener((obs, wasIconified, iconified) -> {
+            if (iconified) {
+                meterTicker.stop();
+                for (LevelMeter vuMeter : vuMeters.values()) {
+                    vuMeter.resetAnimationClock();
+                }
+            } else {
+                meterTicker.start();
+            }
+        });
     }
 
     private HBox buildToolbar() {
@@ -344,7 +380,12 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
 
     private void stopAllMeters() {
         for (LevelMeter vuMeter : vuMeters.values()) {
-            vuMeter.stop();
+            try {
+                vuMeter.stop();
+            } catch (RuntimeException e) {
+                // One failing meter must not prevent the remaining device lines from closing
+                System.err.println("Failed to stop a level meter: " + e.getMessage());
+            }
         }
     }
 

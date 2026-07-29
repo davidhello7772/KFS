@@ -64,6 +64,14 @@ public class AudioCaptureManager {
          * @param format     The AudioFormat of the captured data.
          */
         void onAudioData(byte[] buffer, int bytesRead, AudioFormat format);
+
+        /**
+         * Called when the capture thread dies on an error (e.g. the device is
+         * held exclusively by another process and the line cannot be opened).
+         *
+         * @param message A human-readable description of the failure.
+         */
+        default void onCaptureError(String message) {}
     }
 
     /**
@@ -78,7 +86,10 @@ public class AudioCaptureManager {
         private SourceDataLine outputLine;
         private volatile boolean running = false;
         private volatile boolean monitoring = false;
-        private String channel;
+        // Set by the FX thread; the capture thread opens/prefills/starts the output
+        // line itself so playback never begins on an empty running line (crackle).
+        private volatile boolean monitorStartPending = false;
+        private volatile String channel;
         private AudioFormat captureFormat;
         private AudioFormat playbackFormat;
 
@@ -117,16 +128,19 @@ public class AudioCaptureManager {
          */
         void startMonitoring(String channel) {
             this.channel = channel;
-            monitoring = true;
+            monitorStartPending = true;
         }
 
         /**
          * Disables audio monitoring.
          */
         void stopMonitoring() {
+            monitorStartPending = false;
             monitoring = false;
-            if (outputLine != null) {
-                outputLine.flush();
+            SourceDataLine line = outputLine;
+            if (line != null) {
+                line.stop();
+                line.flush();
             }
         }
 
@@ -156,20 +170,42 @@ public class AudioCaptureManager {
 
         /**
          * Sets up the output line (SourceDataLine) for audio monitoring playback.
+         * The line is opened but NOT started: the capture thread prefills it with
+         * silence and starts it only when monitoring actually begins.
          */
         private void setupOutputLine() {
             try {
-                playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
                 DataLine.Info outputInfo = new DataLine.Info(SourceDataLine.class, playbackFormat);
                 outputLine = (SourceDataLine) AudioSystem.getLine(outputInfo);
                 // Increased buffer to 400ms for more stability
                 int outputBufferSize = (int) (playbackFormat.getSampleRate() * playbackFormat.getFrameSize() * 0.4f);
                 outputLine.open(playbackFormat, outputBufferSize);
-                outputLine.start();
             } catch (LineUnavailableException e) {
                 System.err.println("Failed to setup output line: " + e.getMessage());
                 outputLine = null;
             }
+        }
+
+        /**
+         * Transitions monitoring on, called on the capture thread. Lazily opens the
+         * output line, then prefills it with ~200ms of silence before starting it so
+         * the play cursor never catches the write pointer while the buffer ramps up
+         * (that starvation is what caused the crackling at monitoring start).
+         */
+        private void beginMonitoringPlayback() {
+            if (outputLine == null) {
+                setupOutputLine();
+            }
+            if (outputLine == null) {
+                return;
+            }
+            outputLine.stop();
+            outputLine.flush();
+            int silenceBytes = (int) (playbackFormat.getSampleRate() * playbackFormat.getFrameSize() * 0.2f);
+            silenceBytes -= silenceBytes % playbackFormat.getFrameSize();
+            outputLine.write(new byte[silenceBytes], 0, silenceBytes);
+            outputLine.start();
+            monitoring = true;
         }
 
         /**
@@ -265,19 +301,31 @@ public class AudioCaptureManager {
 
                     inputLine.open(captureFormat, inputBufferSize);
                     inputLine.start();
-                    setupOutputLine();
+                    playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
 
                     byte[] inputBuffer = new byte[inputLine.getBufferSize()];
                     int outputBufferSize = (inputBuffer.length / captureFormat.getFrameSize()) * playbackFormat.getFrameSize();
                     byte[] outputBuffer = new byte[outputBufferSize];
 
+                    // Read a quarter of the line buffer per call (~37ms): keeps the meters
+                    // responsive and leaves headroom in the line buffer against overruns.
+                    int chunkSize = inputBuffer.length / 4;
+                    chunkSize -= chunkSize % captureFormat.getFrameSize();
+                    if (chunkSize <= 0) {
+                        chunkSize = captureFormat.getFrameSize();
+                    }
+
                     System.out.println("Started capture: " + captureFormat + ", buffer: " + inputBuffer.length + " bytes");
 
                     while (running) {
-                        int bytesRead = inputLine.read(inputBuffer, 0, inputBuffer.length);
+                        int bytesRead = inputLine.read(inputBuffer, 0, chunkSize);
                         if (bytesRead > 0) {
                             for (AudioDataListener listener : listeners) {
                                 listener.onAudioData(inputBuffer, bytesRead, captureFormat);
+                            }
+                            if (monitorStartPending) {
+                                monitorStartPending = false;
+                                beginMonitoringPlayback();
                             }
                             if (monitoring) {
                                 writeToMonitor(inputBuffer, bytesRead, outputBuffer);
@@ -286,7 +334,9 @@ public class AudioCaptureManager {
                     }
                 } catch (Exception e) {
                     System.err.println("Error in audio capture thread for " + mixerInfo.getName() + ": " + e.getMessage());
-                   // e.printStackTrace();
+                    for (AudioDataListener listener : listeners) {
+                        listener.onCaptureError(e.getMessage());
+                    }
                 } finally {
                     cleanup();
                 }
@@ -300,7 +350,7 @@ public class AudioCaptureManager {
          * Cleans up audio resources, stopping and closing input and output lines.
          */
         private void cleanup() {
-            System.out.println("Cleaning - input:" + inputLine.toString()+" - output:"+outputLine.toString());
+            System.out.println("Cleaning capture for " + mixerInfo.getName() + " - input:" + inputLine + " - output:" + outputLine);
             if (inputLine != null) {
                 inputLine.stop();
                 inputLine.close();
@@ -314,14 +364,23 @@ public class AudioCaptureManager {
         }
 
         /**
-         * Stops the audio capture thread and triggers cleanup.
+         * Stops the audio capture thread and waits briefly for it to release the line,
+         * so a capture for the same device can be reopened immediately afterwards.
+         * Safe to call more than once.
          */
         private void stop() {
             running = false;
-            if (captureThread != null) {
-                captureThread.interrupt();
+            Thread thread = captureThread;
+            captureThread = null;
+            if (thread != null) {
+                thread.interrupt();
+                try {
+                    thread.join(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                System.out.println("Stopped capture for " + mixerInfo.getName());
             }
-            System.out.println("Stop capture: " + inputLine.toString());
         }
 
         /**

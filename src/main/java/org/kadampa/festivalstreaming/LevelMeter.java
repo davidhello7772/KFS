@@ -1,6 +1,5 @@
 package org.kadampa.festivalstreaming;
 
-import javafx.animation.AnimationTimer;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
@@ -21,8 +20,8 @@ import javafx.util.Duration;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.Mixer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedList;
 
 public class LevelMeter {
 
@@ -75,6 +74,7 @@ public class LevelMeter {
     }
 
     private final VBox view;
+    private final StackPane root;
     private Label dbLabel;
     private Label audioInterfaceLabel;
     private Circle statusIndicator;
@@ -86,7 +86,6 @@ public class LevelMeter {
     private AudioCaptureManager.AudioDataListener audioDataListener;
 
     private Rectangle peakHoldBar;
-    private AnimationTimer animationTimer;
     private PauseTransition peakHoldTimer;
 
     //<editor-fold desc="Meter Constants">
@@ -104,7 +103,9 @@ public class LevelMeter {
     private volatile double actualCurrentDb = MIN_DB;
     private double actualDisplayDb = MIN_DB;
 
-    private final LinkedList<Double> volumeHistory = new LinkedList<>();
+    // Written on the audio capture thread, read on the VolumeMonitor scheduler thread:
+    // every access must synchronize on the deque itself.
+    private final ArrayDeque<Double> volumeHistory = new ArrayDeque<>();
     private static final int VOLUME_HISTORY_SIZE = 100; // Roughly 10 seconds at 10 updates/sec
 
     private double displayDb = MIN_DB;
@@ -125,6 +126,18 @@ public class LevelMeter {
 
     private ArrayList<Rectangle> meterBoxes;
     private ArrayList<Rectangle> meterBackgroundBoxes;
+    // The lit-box "glow" is a translucent enlarged rectangle behind each box (crisp halo):
+    // pure geometry, because per-box Gaussian DropShadows (40 x 12 meters) dominated GPU use.
+    private ArrayList<Rectangle> haloBoxes;
+    private Color[] boxColors;
+    private DropShadow peakHoldGlow;
+    // Last state pushed to the scene graph, so a frame only touches nodes that changed
+    private int lastActiveBoxes = 0;
+    private boolean lastPeakFlash = false;
+    private int lastPeakBoxIndex = -1;
+    private boolean lastPeakVisible = false;
+    private int lastLabelTenths = Integer.MIN_VALUE;
+    private long lastAnimationNanos = 0;
     private static final int NUM_BOXES = 40; // Total number of discrete boxes
     private static final double BOX_HEIGHT = (METER_HEIGHT - (NUM_BOXES - 1) * 2) / NUM_BOXES; // 2px gap between boxes
     private static final double BOX_GAP = 2.0; // Gap between boxes
@@ -162,12 +175,23 @@ public class LevelMeter {
 
         setupBindings();
 
+        // The card's outer shadow lives on a static sibling node, NOT on the card itself:
+        // an effect on the card would force a full-card Gaussian re-blur on every animated
+        // frame. The static rectangle never changes, so its blur is rendered once and cached.
         DropShadow dropShadow = new DropShadow();
         dropShadow.setRadius(16);
         dropShadow.setOffsetX(0);
         dropShadow.setOffsetY(8);
         dropShadow.setColor(COLOR_BACKGROUND_DARK_TRANSPARENT);
-        view.setEffect(dropShadow);
+        Rectangle shadowRect = new Rectangle();
+        shadowRect.setManaged(false);
+        shadowRect.setArcWidth(32);
+        shadowRect.setArcHeight(32);
+        shadowRect.setFill(Color.BLACK);
+        shadowRect.widthProperty().bind(view.widthProperty());
+        shadowRect.heightProperty().bind(view.heightProperty());
+        shadowRect.setEffect(dropShadow);
+        root = new StackPane(shadowRect, view);
 
         setupAnimation();
         peakFlashTimer.setOnFinished(e -> peakFlashActive = false);
@@ -407,6 +431,8 @@ public class LevelMeter {
         // Initialize the discrete boxes
         meterBoxes = new ArrayList<>();
         meterBackgroundBoxes = new ArrayList<>();
+        haloBoxes = new ArrayList<>();
+        rebuildBoxColors();
 
         for (int i = 0; i < NUM_BOXES; i++) {
             // Calculate position from bottom to top
@@ -423,21 +449,27 @@ public class LevelMeter {
             meterBackgroundBoxes.add(bgBox);
             meterPane.getChildren().add(bgBox);
 
+            // Crisp halo behind the lit box, clipped by the meter's rounded clip so it
+            // bleeds into the side margins and gaps like the old Gaussian glow did
+            Rectangle halo = new Rectangle(METER_WIDTH + 2, BOX_HEIGHT + 6);
+            halo.setX(-1);
+            halo.setY(y - 3);
+            halo.setArcWidth(8);
+            halo.setArcHeight(8);
+            halo.setOpacity(0.35);
+            halo.setFill(boxColors[i]);
+            halo.setVisible(false);
+            haloBoxes.add(halo);
+            meterPane.getChildren().add(halo);
+
             // Active box (lit up when signal reaches this level)
             Rectangle activeBox = new Rectangle(METER_WIDTH - 4, BOX_HEIGHT);
             activeBox.setX(2);
             activeBox.setY(y);
             activeBox.setArcWidth(4);
             activeBox.setArcHeight(4);
-            activeBox.setFill(getColorForBox(i));
+            activeBox.setFill(boxColors[i]);
             activeBox.setVisible(false);
-
-            // Add glow effect to active boxes
-            DropShadow glow = new DropShadow();
-            glow.setRadius(8);
-            glow.setColor(getColorForBox(i));
-            glow.setSpread(0.3);
-            activeBox.setEffect(glow);
 
             meterBoxes.add(activeBox);
             meterPane.getChildren().add(activeBox);
@@ -481,12 +513,12 @@ public class LevelMeter {
         peakHoldBar.setFill(COLOR_METER_PEAK);
         peakHoldBar.setVisible(false);
 
-        // Enhanced glow for peak hold
-        DropShadow peakGlow = new DropShadow();
-        peakGlow.setRadius(12);
-        peakGlow.setColor(COLOR_METER_PEAK);
-        peakGlow.setSpread(0.5);
-        peakHoldBar.setEffect(peakGlow);
+        // Enhanced glow for peak hold (single reusable instance)
+        peakHoldGlow = new DropShadow();
+        peakHoldGlow.setRadius(12);
+        peakHoldGlow.setColor(COLOR_METER_PEAK);
+        peakHoldGlow.setSpread(0.5);
+        peakHoldBar.setEffect(peakHoldGlow);
 
         meterPane.getChildren().add(peakHoldBar);
 
@@ -501,8 +533,27 @@ public class LevelMeter {
         this.greenThresholdDb = greenDb;
         this.yellowThresholdDb = yellowDb;
         this.redThresholdDb = redDb;
+        rebuildBoxColors();
         for (int i = 0; i < meterBackgroundBoxes.size(); i++) {
             meterBackgroundBoxes.get(i).setFill(getBackgroundColorForBox(i));
+        }
+        // Push the new zone colors to the cached box/halo fills (unless a peak flash
+        // currently paints everything red; the flash-exit restore uses boxColors anyway)
+        if (!lastPeakFlash) {
+            for (int i = 0; i < NUM_BOXES; i++) {
+                meterBoxes.get(i).setFill(boxColors[i]);
+                haloBoxes.get(i).setFill(boxColors[i]);
+            }
+        }
+        lastPeakBoxIndex = -1; // force the peak-hold bar to refresh its color
+    }
+
+    private void rebuildBoxColors() {
+        if (boxColors == null) {
+            boxColors = new Color[NUM_BOXES];
+        }
+        for (int i = 0; i < NUM_BOXES; i++) {
+            boxColors[i] = getColorForBox(i);
         }
     }
 
@@ -538,7 +589,6 @@ public class LevelMeter {
         }
     }
 
-    // Replace the drawMeter() method with this implementation:
     private void drawMeter() {
         double totalRange = METER_CEILING_DB - MIN_DB;
         double dbClamped = Math.max(MIN_DB, Math.min(METER_CEILING_DB, displayDb));
@@ -551,68 +601,64 @@ public class LevelMeter {
             activeBoxes = Math.max(0, Math.min(NUM_BOXES, activeBoxes));
         }
 
-        // Handle peak flash effect
-        if (peakFlashActive) {
-            // Light up all boxes in red during peak flash
-            for (int i = 0; i < NUM_BOXES; i++) {
-                Rectangle box = meterBoxes.get(i);
-                box.setFill(COLOR_METER_RED);
-                box.setVisible(true);
-
-                // Enhanced glow during peak flash
-                DropShadow flashGlow = new DropShadow();
-                flashGlow.setRadius(15);
-                flashGlow.setColor(COLOR_METER_RED);
-                flashGlow.setSpread(0.8);
-                box.setEffect(flashGlow);
-            }
-        } else {
-            // Normal operation - light up boxes based on level
-            for (int i = 0; i < NUM_BOXES; i++) {
-                Rectangle box = meterBoxes.get(i);
-                if (i < activeBoxes) {
-                    box.setFill(getColorForBox(i));
-                    box.setVisible(true);
-
-                    // Normal glow effect
-                    DropShadow glow = new DropShadow();
-                    glow.setRadius(8);
-                    glow.setColor(getColorForBox(i));
-                    glow.setSpread(0.3);
-                    box.setEffect(glow);
-                } else {
-                    box.setVisible(false);
+        // Handle peak flash effect: only the enter/exit transitions touch the boxes;
+        // during steady flash (all red) and steady normal frames nothing is rewritten
+        if (peakFlashActive != lastPeakFlash) {
+            if (peakFlashActive) {
+                for (int i = 0; i < NUM_BOXES; i++) {
+                    meterBoxes.get(i).setFill(COLOR_METER_RED);
+                    meterBoxes.get(i).setVisible(true);
+                    haloBoxes.get(i).setFill(COLOR_METER_RED);
+                    haloBoxes.get(i).setVisible(true);
                 }
+            } else {
+                for (int i = 0; i < NUM_BOXES; i++) {
+                    meterBoxes.get(i).setFill(boxColors[i]);
+                    meterBoxes.get(i).setVisible(i < activeBoxes);
+                    haloBoxes.get(i).setFill(boxColors[i]);
+                    haloBoxes.get(i).setVisible(i < activeBoxes);
+                }
+                lastActiveBoxes = activeBoxes;
             }
+            lastPeakFlash = peakFlashActive;
+        } else if (!peakFlashActive && activeBoxes != lastActiveBoxes) {
+            // Normal operation - only toggle the boxes between the old and new level
+            int from = Math.min(activeBoxes, lastActiveBoxes);
+            int to = Math.max(activeBoxes, lastActiveBoxes);
+            for (int i = from; i < to; i++) {
+                boolean lit = i < activeBoxes;
+                meterBoxes.get(i).setVisible(lit);
+                haloBoxes.get(i).setVisible(lit);
+            }
+            lastActiveBoxes = activeBoxes;
         }
 
         // Handle peak hold indicator
-        if (peakDb > MIN_DB) {
+        boolean peakVisible = peakDb > MIN_DB;
+        if (peakVisible) {
             double peakNormalized = (peakDb - MIN_DB) / totalRange;
             int peakBoxIndex = (int) Math.round(peakNormalized * NUM_BOXES) - 1;
             peakBoxIndex = Math.max(0, Math.min(NUM_BOXES - 1, peakBoxIndex));
 
-            double peakY = METER_HEIGHT - (peakBoxIndex + 1) * (BOX_HEIGHT + BOX_GAP) + BOX_GAP;
-            peakHoldBar.setY(peakY);
-
-            // Set peak hold color based on level
-            Color peakColor = getColorForBox(peakBoxIndex);
-            peakHoldBar.setFill(peakColor);
-
-            // Enhanced glow for peak hold
-            DropShadow peakGlow = new DropShadow();
-            peakGlow.setRadius(12);
-            peakGlow.setColor(peakColor);
-            peakGlow.setSpread(0.5);
-            peakHoldBar.setEffect(peakGlow);
-
-            peakHoldBar.setVisible(true);
-        } else {
-            peakHoldBar.setVisible(false);
+            if (peakBoxIndex != lastPeakBoxIndex) {
+                peakHoldBar.setY(METER_HEIGHT - (peakBoxIndex + 1) * (BOX_HEIGHT + BOX_GAP) + BOX_GAP);
+                Color peakColor = boxColors[peakBoxIndex];
+                peakHoldBar.setFill(peakColor);
+                peakHoldGlow.setColor(peakColor);
+                lastPeakBoxIndex = peakBoxIndex;
+            }
+        }
+        if (peakVisible != lastPeakVisible) {
+            peakHoldBar.setVisible(peakVisible);
+            lastPeakVisible = peakVisible;
         }
 
-        // Update the dB label
-        dbLabel.setText(String.format("%.1f dB", actualDisplayDb));
+        // Update the dB label only when the displayed tenth of a dB actually changes
+        int labelTenths = (int) Math.round(actualDisplayDb * 10);
+        if (labelTenths != lastLabelTenths) {
+            dbLabel.setText(String.format("%.1f dB", labelTenths / 10.0));
+            lastLabelTenths = labelTenths;
+        }
     }
 
 
@@ -622,58 +668,65 @@ public class LevelMeter {
             peakDb = MIN_DB;
             peakHoldBar.setVisible(false);
         });
+    }
 
-        animationTimer = new AnimationTimer() {
-            private long lastUpdate = 0;
+    /**
+     * One animation step. Driven by the panel's single shared timer (~30fps) instead of
+     * a per-meter 60fps AnimationTimer, halving render work across all visible meters.
+     */
+    void tick(long now) {
+        if (!running) {
+            return;
+        }
+        if (lastAnimationNanos == 0) {
+            lastAnimationNanos = now;
+            return;
+        }
+        double elapsedSeconds = (now - lastAnimationNanos) / 1_000_000_000.0;
+        lastAnimationNanos = now;
 
-            @Override
-            public void handle(long now) {
-                if (lastUpdate == 0) {
-                    lastUpdate = now;
-                    return;
-                }
-                double elapsedSeconds = (now - lastUpdate) / 1_000_000_000.0;
-                lastUpdate = now;
+        if (currentDb < displayDb) {
+            displayDb -= DECAY_RATE_DB_PER_SEC * elapsedSeconds;
+            displayDb = Math.max(displayDb, currentDb);
+        } else {
+            displayDb = currentDb;
+        }
 
-                if (currentDb < displayDb) {
-                    displayDb -= DECAY_RATE_DB_PER_SEC * elapsedSeconds;
-                    displayDb = Math.max(displayDb, currentDb);
-                } else {
-                    displayDb = currentDb;
-                }
+        if (actualCurrentDb < actualDisplayDb) {
+            actualDisplayDb -= DECAY_RATE_DB_PER_SEC * elapsedSeconds;
+            actualDisplayDb = Math.max(actualDisplayDb, actualCurrentDb);
+        } else {
+            actualDisplayDb = actualCurrentDb;
+        }
 
-                if (actualCurrentDb < actualDisplayDb) {
-                    actualDisplayDb -= DECAY_RATE_DB_PER_SEC * elapsedSeconds;
-                    actualDisplayDb = Math.max(actualDisplayDb, actualCurrentDb);
-                } else {
-                    actualDisplayDb = actualCurrentDb;
-                }
+        if (displayDb > peakDb) {
+            peakDb = displayDb;
+            peakHoldTimer.playFromStart();
+        }
 
-                if (displayDb > peakDb) {
-                    peakDb = displayDb;
-                    peakHoldTimer.playFromStart();
-                }
-
-                // Trigger peak flash if level is close to ceiling
-                if (displayDb >= METER_CEILING_DB - 0.1) {
-                    if (!peakFlashActive) {
-                        peakFlashActive = true;
-                        peakFlashTimer.playFromStart();
-                    }
-                }
-
-                if (displayDb > redThresholdDb) {
-                    redPeakTimestamp = now;
-                } else if (displayDb > yellowThresholdDb) {
-                    yellowPeakTimestamp = now;
-                } else if (displayDb > greenThresholdDb) {
-                    greenPeakTimestamp = now;
-                }
-
-                updateStatusIndicator(now);
-                drawMeter();
+        // Trigger peak flash if level is close to ceiling
+        if (displayDb >= METER_CEILING_DB - 0.1) {
+            if (!peakFlashActive) {
+                peakFlashActive = true;
+                peakFlashTimer.playFromStart();
             }
-        };
+        }
+
+        if (displayDb > redThresholdDb) {
+            redPeakTimestamp = now;
+        } else if (displayDb > yellowThresholdDb) {
+            yellowPeakTimestamp = now;
+        } else if (displayDb > greenThresholdDb) {
+            greenPeakTimestamp = now;
+        }
+
+        updateStatusIndicator(now);
+        drawMeter();
+    }
+
+    /** Forgets the last animation timestamp so the next tick doesn't apply a huge decay step. */
+    void resetAnimationClock() {
+        lastAnimationNanos = 0;
     }
 
     private void updateStatusIndicator(long now) {
@@ -714,8 +767,8 @@ public class LevelMeter {
         statusGlow.setColor(glowColor);
     }
 
-    public VBox getView() {
-        return view;
+    public Pane getView() {
+        return root;
     }
 
     private void updateAudioInterfaceLabel() {
@@ -809,12 +862,24 @@ public class LevelMeter {
     }
 
     void start() {
-        if (mixerInfo == null) return;
+        // Guard against double-start: a second registration would orphan the previous
+        // listener in the capture manager and keep the device line open forever
+        if (running || mixerInfo == null) return;
         running = true;
-        animationTimer.start();
-        audioDataListener = (buffer, bytesRead, format) -> {
-            if (running) {
-                currentDb = calculateLevelImproved(buffer, bytesRead, format);
+        setWarningDisplay(false, "", null);
+        audioDataListener = new AudioCaptureManager.AudioDataListener() {
+            @Override
+            public void onAudioData(byte[] buffer, int bytesRead, AudioFormat format) {
+                if (running) {
+                    currentDb = calculateLevelImproved(buffer, bytesRead, format);
+                }
+            }
+
+            @Override
+            public void onCaptureError(String message) {
+                if (running) {
+                    setWarningDisplay(true, "Device unavailable", COLOR_WARNING_HIGH);
+                }
             }
         };
         AudioCaptureManager.getInstance().registerListener(mixerInfo, audioDataListener);
@@ -822,7 +887,7 @@ public class LevelMeter {
 
     public void stop() {
         running = false;
-        animationTimer.stop();
+        lastAnimationNanos = 0;
         if (audioDataListener != null && mixerInfo != null) {
             AudioCaptureManager.getInstance().unregisterListener(mixerInfo, audioDataListener);
             audioDataListener = null;
@@ -876,22 +941,26 @@ public class LevelMeter {
         actualCurrentDb = db;
 
         // Add to history and maintain size
-        volumeHistory.add(actualCurrentDb);
-        if (volumeHistory.size() > VOLUME_HISTORY_SIZE) {
-            volumeHistory.removeFirst();
+        synchronized (volumeHistory) {
+            volumeHistory.addLast(actualCurrentDb);
+            if (volumeHistory.size() > VOLUME_HISTORY_SIZE) {
+                volumeHistory.removeFirst();
+            }
         }
         return Math.max(db, MIN_DB);
     }
 
     public double getAverageActualDb() {
-        if (volumeHistory.isEmpty()) {
-            return MIN_DB; // Or some other default/indicator
+        synchronized (volumeHistory) {
+            if (volumeHistory.isEmpty()) {
+                return MIN_DB; // Or some other default/indicator
+            }
+            double sum = 0;
+            for (Double val : volumeHistory) {
+                sum += val;
+            }
+            return sum / volumeHistory.size();
         }
-        double sum = 0;
-        for (Double val : volumeHistory) {
-            sum += val;
-        }
-        return sum / volumeHistory.size();
     }
 
     /**
