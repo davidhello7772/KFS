@@ -42,7 +42,9 @@ import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.DataLine;
 import javax.sound.sampled.Line;
 import javax.sound.sampled.Mixer;
 import javax.sound.sampled.TargetDataLine;
@@ -66,6 +68,8 @@ public class StreamingGUI extends Application {
     private final TextField inputVideoPid;
     private final TextField inputenMixDelay;
     private final ComboBox<String> inputVideoSource;
+    /** AVFoundation only opens a mode the device advertised, so macOS picks one explicitly. */
+    private final ComboBox<String> inputVideoInputMode;
     private final ComboBox<String> inputVideoSourceBuffer;
     private final ComboBox<String> inputAudioSourceBuffer;
     private final ComboBox<String> inputVideoBitrate;
@@ -78,6 +82,8 @@ public class StreamingGUI extends Application {
     private final TextField inputSrtURL;
     private final TextField inputOutputDirectory;
     private final ComboBox<String> inputAudioBitrate;
+    /** The rate the capture devices run at; the recording is encoded at the same rate. */
+    private final ComboBox<String> inputAudioSampleRate;
     private final ComboBox<String> inputFramePerSecond;
     private final TextFlow consoleOutputTextFlow;
     private final Button startButton;
@@ -129,12 +135,15 @@ public class StreamingGUI extends Application {
     private static final Color LIVE_GREEN = Color.web("#22C55E");
     private static final Color ERROR_ORANGE = Color.web("#EE7130");
     private static final long ERROR_COLOUR_HOLD_MS = 3000;
+    private static final int MAX_PLAUSIBLE_DEVICE_OPEN_MS = 10000;
     private final DoubleProperty barPulse = new SimpleDoubleProperty(1.0);
     private Color barBaseColor = LIVE_GREEN;
     private long lastErrorMillis = 0;
     private int firstOpeningDeviceStartupTime = 0;
     private int secondOpeningDeviceStartupTime = 0;
     private boolean playingError;
+    /** The format the camera delivers frames in, discovered when the video source is chosen. */
+    private String videoInputPixelFormat;
     private static final Logger logger = LoggerFactory.getLogger(StreamingGUI.class);
 
     public StreamingGUI() {
@@ -168,6 +177,12 @@ public class StreamingGUI extends Application {
         inputAudioBitrate = new ComboBox<>();
         inputAudioBitrate.getItems().add("128k");
         inputAudioBitrate.getItems().add("256k");
+        inputAudioSampleRate = new ComboBox<>();
+        inputAudioSampleRate.getItems().addAll("44100", "48000", "88200", "96000");
+        // The devices are opened at this rate, so a change has to reach the capture manager
+        AudioCaptureManager.setPreferredSampleRate(parseIntOrDefault(settings.getAudioSampleRate(), 48000));
+        inputAudioSampleRate.valueProperty().addListener((observable, oldValue, newValue) ->
+                AudioCaptureManager.setPreferredSampleRate(parseIntOrDefault(newValue, 48000)));
         inputFramePerSecond = new ComboBox<>();
         inputFramePerSecond.getItems().add("30");
         inputVideoBitrate = new ComboBox<>();
@@ -207,8 +222,11 @@ public class StreamingGUI extends Application {
 
         inputOutputFileResolution = new ComboBox<>();
         inputEncoder = new ComboBox<>();
-        inputEncoder.getItems().add("libx264");
-        inputEncoder.getItems().add("h264_nvenc");
+        // The hardware encoder depends on the machine: NVENC on the Windows streaming PC,
+        // VideoToolbox on a Mac. Only what this ffmpeg build actually has is offered.
+        inputEncoder.getItems().addAll(Host.videoEncoders(settings.getFfmpegPath()));
+
+        inputVideoInputMode = new ComboBox<>();
 
         inputChooseBetweenUrlOrFile = new ComboBox<>();
         inputChooseBetweenUrlOrFile.getItems().add("Srt URL (livestream)");
@@ -371,18 +389,193 @@ public class StreamingGUI extends Application {
                 }
             }
         }
-        for (ComboBox<String> audioInputChannel : inputAudioSourcesChannel) {
-            audioInputChannel.getItems().add(SettingsUtil.AUDIO_CHANNEL_JOIN);
-            audioInputChannel.getItems().add(SettingsUtil.AUDIO_CHANNEL_LEFT);
-            audioInputChannel.getItems().add(SettingsUtil.AUDIO_CHANNEL_RIGHT);
-            }
+        for (int i = 0; i < inputAudioSources.length; i++) {
+            populateChannels(i, inputAudioSources[i].getValue());
+        }
         for (ComboBox<String> noiseReductionInput : inputNoiseReductionValues) {
             noiseReductionInput.getItems().addAll("0","1","2","3");
         }
 
+        populateVideoSources();
+    }
+
+    /**
+     * Lists the cameras. The webcam-capture library is the long-standing Windows path; it has no
+     * working macOS driver, and there ffmpeg reports the devices under exactly the names it will
+     * accept back as an input.
+     */
+    private void populateVideoSources() {
+        if (Host.isMac()) {
+            inputVideoSource.getItems().addAll(AvFoundationDevices.videoDeviceNames(settings.getFfmpegPath()));
+            return;
+        }
         List<Webcam> webcams = Webcam.getWebcams();
         for (Webcam webcam : webcams) {
             this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
+        }
+    }
+
+    /**
+     * Fills the channel list for one language from the device it reads.
+     * <p>
+     * A stereo cable carries two languages, so it keeps the familiar Left/Right/Join. A mixer
+     * presents all of its inputs as a single device instead, and there each language sits on its
+     * own numbered channel.
+     */
+    private void populateChannels(int languageIndex, String deviceName) {
+        ComboBox<String> channelInput = inputAudioSourcesChannel[languageIndex];
+        String previous = channelInput.getValue();
+        int channelCount = channelCountOf(deviceName);
+        List<String> channels = new ArrayList<>();
+        if (channelCount > 2) {
+            for (int channel = 1; channel <= channelCount; channel++) {
+                channels.add(SettingsUtil.audioChannelName(channel));
+            }
+        } else {
+            channels.add(SettingsUtil.AUDIO_CHANNEL_JOIN);
+            channels.add(SettingsUtil.AUDIO_CHANNEL_LEFT);
+            channels.add(SettingsUtil.AUDIO_CHANNEL_RIGHT);
+        }
+        if (channels.equals(channelInput.getItems())) {
+            return;
+        }
+        channelInput.getItems().setAll(channels);
+        if (previous != null && channels.contains(previous)) {
+            channelInput.setValue(previous);
+        } else if (previous != null && !previous.isBlank()) {
+            // Moving between a stereo cable and a mixer: keep the same physical input
+            channelInput.setValue(channels.get(Math.min(SettingsUtil.audioChannelIndex(previous), channels.size() - 1)));
+        }
+    }
+
+    /**
+     * Puts a saved channel onto a combo whose entries came from the device actually present.
+     * A settings file written against stereo cables says Left or Right, which on a mixer means
+     * its first and second inputs.
+     */
+    private void applyChannelValue(ComboBox<String> channelInput, String saved) {
+        if (channelInput.getItems().isEmpty()) {
+            channelInput.setValue(saved);
+            return;
+        }
+        if (saved != null && !saved.isBlank() && channelInput.getItems().contains(saved)) {
+            channelInput.setValue(saved);
+            return;
+        }
+        int index = Math.min(SettingsUtil.audioChannelIndex(saved), channelInput.getItems().size() - 1);
+        channelInput.setValue(channelInput.getItems().get(Math.max(index, 0)));
+    }
+
+    /** The number of inputs a capture device offers, or 2 when it cannot be determined. */
+    private int channelCountOf(String deviceName) {
+        if (deviceName == null || deviceName.isBlank() || SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName)) {
+            return 2;
+        }
+        for (Mixer.Info mixerInfo : AudioSystem.getMixerInfo()) {
+            if (!mixerInfo.getName().equals(deviceName)) {
+                continue;
+            }
+            int maximum = 0;
+            for (Line.Info lineInfo : AudioSystem.getMixer(mixerInfo).getTargetLineInfo()) {
+                if (!(lineInfo instanceof DataLine.Info dataLineInfo)) {
+                    continue;
+                }
+                for (AudioFormat format : dataLineInfo.getFormats()) {
+                    maximum = Math.max(maximum, format.getChannels());
+                }
+            }
+            if (maximum > 0) {
+                return maximum;
+            }
+        }
+        return 2;
+    }
+
+    /** Asks the selected camera what it can capture. AVFoundation refuses anything else. */
+    private void populateVideoInputModes() {
+        if (!Host.isMac()) {
+            return;
+        }
+        String previous = inputVideoInputMode.getValue();
+        List<String> modes = AvFoundationDevices.supportedModes(settings.getFfmpegPath(), inputVideoSource.getValue())
+                .stream().map(AvFoundationDevices.CaptureMode::toString).toList();
+        inputVideoInputMode.getItems().setAll(modes);
+        if (previous != null && modes.contains(previous)) {
+            inputVideoInputMode.setValue(previous);
+        } else if (!modes.isEmpty()) {
+            inputVideoInputMode.setValue(defaultVideoInputMode(modes));
+        }
+        // The camera also decides what the frames look like on the way in, and ffmpeg's own
+        // default is one that cameras rarely offer, so the device is asked which it supports
+        videoInputPixelFormat = AvFoundationDevices.bestPixelFormat(settings.getFfmpegPath(),
+                inputVideoSource.getValue(),
+                AvFoundationDevices.CaptureMode.parse(inputVideoInputMode.getValue()));
+    }
+
+    private String defaultVideoInputMode(List<String> modes) {
+        int frameRate = parseIntOrDefault(inputFramePerSecond.getValue(), 30);
+        String resolution = isTheOutputAFile.get() ? inputOutputFileResolution.getValue() : inputSrtResolution.getValue();
+        int height = switch (resolution == null ? "" : resolution) {
+            case "hd480" -> 480;
+            case "hd1080" -> 1080;
+            default -> 720;
+        };
+        AvFoundationDevices.CaptureMode best = AvFoundationDevices.bestMode(
+                modes.stream().map(AvFoundationDevices.CaptureMode::parse).filter(Objects::nonNull).toList(),
+                frameRate, height * 16 / 9, height);
+        return best != null ? best.toString() : modes.get(0);
+    }
+
+    private static int parseIntOrDefault(String text, int fallback) {
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException | NullPointerException e) {
+            return fallback;
+        }
+    }
+
+    /**
+     * Checks the audio devices can actually be recorded from.
+     * <p>
+     * On macOS the application reads the device itself and sends the samples to ffmpeg, which
+     * means the device has to be one Java Sound can open, and only one of them can be used: the
+     * samples travel down ffmpeg's standard input and there is only one of those.
+     */
+    private boolean checkAudioSampleRates() {
+        if (!Host.isMac()) {
+            return true;  // ffmpeg opens the devices itself through DirectShow
+        }
+        boolean result = true;
+        Set<String> devices = new LinkedHashSet<>();
+        for (ComboBox<String> audioInput : inputAudioSources) {
+            String deviceName = audioInput.getValue();
+            if (deviceName != null && !SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName) && !deviceName.isBlank()) {
+                devices.add(deviceName);
+            }
+        }
+        for (String deviceName : devices) {
+            if (AudioCaptureManager.findCaptureDevice(deviceName) == null) {
+                appendToConsole("The audio device \"" + deviceName + "\" cannot be opened for recording.",
+                        "", Color.RED);
+                result = false;
+            }
+        }
+        if (devices.size() > 1) {
+            appendToConsole("All the languages have to come from a single audio device on this machine, but "
+                    + devices.size() + " are selected: " + String.join(", ", devices)
+                    + ". A mixer presents all of its inputs as one device, so choose the same one for every language"
+                    + " and give each language its own channel.", "", Color.RED);
+            result = false;
+        }
+        return result;
+    }
+
+    /** The stream start time in milliseconds, or {@link Integer#MIN_VALUE} if it is not a number. */
+    private static int parseStartMillis(String startTime) {
+        try {
+            return (int) (Double.parseDouble(startTime.trim()) * 1000);
+        } catch (NumberFormatException e) {
+            return Integer.MIN_VALUE;
         }
     }
 
@@ -467,7 +660,7 @@ public class StreamingGUI extends Application {
 
         for (int i = 0; i < inputAudioSourcesChannel.length; i++) {
             String languageName = Settings.LANGUAGES[i].name();
-            inputAudioSourcesChannel[i].setValue(settings.getAudioSourcesChannel().getOrDefault(languageName, ""));
+            applyChannelValue(inputAudioSourcesChannel[i], settings.getAudioSourcesChannel().getOrDefault(languageName, ""));
         }
 
         for (int i = 0; i < inputNoiseReductionValues.length; i++) {
@@ -492,7 +685,14 @@ public class StreamingGUI extends Application {
 
         // Rest of the method remains unchanged...
         inputenMixDelay.setText(settings.getEnMixDelay());
-        inputVideoSource.setValue(settings.getVideoSource());
+        if (!settings.getVideoSource().isEmpty()) {
+            inputVideoSource.setValue(settings.getVideoSource());
+        }
+        // Selecting the source has just refreshed the mode list, so restore the saved one on top
+        if (!settings.getVideoInputMode().isEmpty()
+                && inputVideoInputMode.getItems().contains(settings.getVideoInputMode())) {
+            inputVideoInputMode.setValue(settings.getVideoInputMode());
+        }
         inputVideoSourceBuffer.setValue(settings.getVideoBuffer());
         inputAudioSourceBuffer.setValue(settings.getAudioBuffer());
         inputVideoBitrate.setValue(settings.getVideoBitrate());
@@ -502,12 +702,32 @@ public class StreamingGUI extends Application {
         inputChooseBetweenUrlOrFile.setValue(settings.getOutputType());
         inputSrtResolution.setValue(settings.getSrtDef());
         inputOutputFileResolution.setValue(settings.getFileDef());
-        inputEncoder.setValue(settings.getEncoder());
+        // The saved encoder may belong to the other machine, NVENC needing a card no Mac has
+        if (inputEncoder.getItems().contains(settings.getEncoder())) {
+            inputEncoder.setValue(settings.getEncoder());
+        } else if (!inputEncoder.getItems().isEmpty()) {
+            inputEncoder.setValue(inputEncoder.getItems().get(0));
+            if (!settings.getEncoder().isEmpty()) {
+                appendToConsole("The encoder " + settings.getEncoder() + " is not available on this machine. Using "
+                        + inputEncoder.getValue() + " instead.", "", ERROR_ORANGE);
+            }
+        }
         inputSrtURL.setText(settings.getSrtURL());
         inputTimeNeededToOpenADevice.setText(settings.getTimeNeededToOpenADevice());
-        inputOutputDirectory.setText(settings.getOutputDirectory());
+        inputOutputDirectory.setText(outputDirectoryForThisMachine());
         inputAudioBitrate.setValue(settings.getAudioBitrate());
+        inputAudioSampleRate.setValue(settings.getAudioSampleRate());
         inputFramePerSecond.setValue(settings.getFps());
+    }
+
+    /** The saved recording folder, or this machine's default when it points somewhere else. */
+    private String outputDirectoryForThisMachine() {
+        String saved = settings.getOutputDirectory();
+        if (!saved.isEmpty() && new File(saved).isDirectory()) {
+            return saved;
+        }
+        String fallback = Host.defaultOutputDirectory();
+        return new File(fallback).isDirectory() ? fallback : saved;
     }
 
     // Updated saveSettings() method in StreamingGUI.java
@@ -530,6 +750,7 @@ public class StreamingGUI extends Application {
         // Rest of the method remains unchanged...
         settings.setEnMixDelay((inputenMixDelay.getText()));
         settings.setVideoSource(inputVideoSource.getValue());
+        settings.setVideoInputMode(inputVideoInputMode.getValue());
         settings.setVideoBitrate(inputVideoBitrate.getValue());
         settings.setAudioBuffer(inputAudioSourceBuffer.getValue());
         settings.setVideoBuffer(inputVideoSourceBuffer.getValue());
@@ -544,6 +765,7 @@ public class StreamingGUI extends Application {
         settings.setTimeNeededToOpenADevice(inputTimeNeededToOpenADevice.getText());
         settings.setOutputDirectory(inputOutputDirectory.getText());
         settings.setAudioBitrate(inputAudioBitrate.getValue());
+        settings.setAudioSampleRate(inputAudioSampleRate.getValue());
         settings.setFps(inputFramePerSecond.getValue());
         for (Map.Entry<String, ColorPicker> entry : languageColorPickers.entrySet()) {
             settings.getLanguageColors().put(entry.getKey(), entry.getValue().getValue().toString());
@@ -798,15 +1020,33 @@ public class StreamingGUI extends Application {
         HBox videoInputLabelHBox = new HBox(1,videoInputLabel, videoInputinfoLabel);
         videoInputLabelHBox.setAlignment(Pos.CENTER_LEFT);
         inputGrid.add(videoInputLabelHBox, 0, row);
-        inputGrid.add(inputVideoSource, 1, row);
-        inputVideoSource.setPrefWidth(450);
+        if (Host.isMac()) {
+            // AVFoundation only opens a mode the camera advertised, so it has to be chosen here
+            inputVideoSource.setPrefWidth(320);
+            inputVideoInputMode.setPrefWidth(125);
+            Tooltip modeTooltip = new Tooltip("The capture mode of the video device (size and frames per second).\n" +
+                    "Only the modes the device reports can be used. A virtual camera lists its modes\n" +
+                    "only while the application providing it is running.");
+            modeTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+            modeTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+            modeTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+            modeTooltip.getStyleClass().add("tooltip");
+            inputVideoInputMode.setTooltip(modeTooltip);
+            inputGrid.add(new HBox(5, inputVideoSource, inputVideoInputMode), 1, row);
+        } else {
+            inputGrid.add(inputVideoSource, 1, row);
+            inputVideoSource.setPrefWidth(450);
+        }
         HBox noisePresetBox = buildNoiseReductionPresets();
         inputGrid.add(noisePresetBox, 2, row);
         GridPane.setColumnSpan(noisePresetBox, 2);
 
         row++;
         //If it's empty, we select the first element
-        if(inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
+        if((inputVideoSource.getValue()==null || inputVideoSource.getValue().isEmpty()) && !inputVideoSource.getItems().isEmpty()) inputVideoSource.setValue(inputVideoSource.getItems().get(0));
+        populateVideoInputModes();
+        inputVideoSource.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue, newValue) -> populateVideoInputModes());
 
         addLanguageRow(inputGrid, row, Settings.LANGUAGES[0].name() + ":", inputAudioSources[0], inputAudioSourcesChannel[0],null,Settings.LANGUAGES[0].name());
         Label EnMixDelayInfoLabel = new Label("?");
@@ -831,8 +1071,9 @@ public class StreamingGUI extends Application {
         GridPane.setColumnSpan(separator,2);
         Label noiseReductionInfoLabel = new Label("?");
         noiseReductionInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip toolti = new Tooltip("The number of iteration of the noise reduction filter. The noise reduction filter directory needs to be installed at the root of C:\n" +
-                "The model are C:\\rnmodel\\sh.rnnn etc., and the files are downloadable here https://github.com/GregorR/rnnoise-nu");
+        Tooltip toolti = new Tooltip("The number of iteration of the noise reduction filter.\n" +
+                "The models ship with the application and are used from " + NoiseModels.modelFile(NoiseModels.SPEECH_MODEL).getParent() + "\n" +
+                "The original files are downloadable here https://github.com/GregorR/rnnoise-nu");
         Tooltip.install(noiseReductionInfoLabel, toolti);
         toolti.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
         toolti.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
@@ -1167,6 +1408,31 @@ public class StreamingGUI extends Application {
         //If it's empty, we select the first element
         if(inputAudioSourceBuffer.getValue()==null || inputAudioSourceBuffer.getValue().isEmpty()) inputAudioSourceBuffer.setValue(inputAudioSourceBuffer.getItems().get(0));
         inputAudioSourceBuffer.setPrefWidth(comboWith);
+        row++;
+
+        Label sampleRateInfoLabel = new Label("?");
+        sampleRateInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip tooltip11 = new Tooltip("""
+                The sample rate of the audio devices, which is also the rate the recording is encoded at.
+
+                It must match the rate the capture device is actually set to. If it does not, the recording
+                contains only a fraction of the audio spread over the whole running time and is unusable,
+                so the application checks the device before starting and refuses to run on a mismatch.
+
+                On macOS the device rate is shown in Audio MIDI Setup; on Windows it is in the sound
+                control panel for the device. 48000 is the usual choice for streaming.""");
+        Tooltip.install(sampleRateInfoLabel, tooltip11);
+        tooltip11.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip11.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+        tooltip11.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        tooltip11.getStyleClass().add("tooltip");
+        Label sampleRateLabel = new Label("Audio sample rate:");
+        HBox sampleRateLabelHBox = new HBox(1, sampleRateLabel, sampleRateInfoLabel);
+        advancedGrid.add(sampleRateLabelHBox, 0, row);
+        if(inputAudioSampleRate.getValue()==null || inputAudioSampleRate.getValue().isEmpty()) inputAudioSampleRate.setValue("48000");
+        advancedGrid.add(inputAudioSampleRate, 1, row);
+        inputAudioSampleRate.setPrefWidth(comboWith);
+
         Button saveButton = new Button("Save settings");
         saveButton.getStyleClass().add("event-button");
         saveButton.getStyleClass().add("primary-button");
@@ -1318,7 +1584,12 @@ public class StreamingGUI extends Application {
             gridPane.add(noiseReductionValue, 3, rowIndex);
         }
 
+        int languageIndex = indexOfLanguage(languageKey);
         audioInput.valueProperty().addListener((observable, oldValue, newValue) -> {
+            // A stereo cable offers Left/Right, a mixer offers one entry per input
+            if (languageIndex >= 0) {
+                populateChannels(languageIndex, newValue);
+            }
             if (!newValue.equals("Not Used") && !newValue.isEmpty()) {
                 audioInputChannel.setDisable(false);
                 // audioInputChannel.setValue("Join");
@@ -1332,6 +1603,15 @@ public class StreamingGUI extends Application {
                 }
             }
         });
+    }
+
+    private static int indexOfLanguage(String languageName) {
+        for (int i = 0; i < Settings.LANGUAGES.length; i++) {
+            if (Settings.LANGUAGES[i].name().equals(languageName)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void handleClose() {
@@ -1367,6 +1647,10 @@ public class StreamingGUI extends Application {
         streamRecorder.setAudioBufferSize(inputAudioSourceBuffer.getValue());
         streamRecorder.setVideoBitrate(inputVideoBitrate.getValue());
         streamRecorder.setVideoBufferSize(inputVideoSourceBuffer.getValue());
+        streamRecorder.setFfmpegPath(settings.getFfmpegPath());
+        streamRecorder.setVideoInputMode(inputVideoInputMode.getValue());
+        streamRecorder.setVideoInputPixelFormat(videoInputPixelFormat);
+        streamRecorder.setAudioSampleRate(inputAudioSampleRate.getValue());
 
         if(isTheOutputFileAndUrl.get())  streamRecorder.setOutputType(StreamRecorderRunnable.FILE_AND_URL);
         else if(isTheOutputAFile.get())  streamRecorder.setOutputType(StreamRecorderRunnable.FILE);
@@ -1430,16 +1714,25 @@ public class StreamingGUI extends Application {
             appendToConsole("Please select an audio source for the english to be mixed with the translation","",Color.RED);
             result = false;
         }
-        File firstRnnnFile = new File("C:/rnmodel/sh.rnnn");
-        if(!firstRnnnFile.exists()) {
-            appendToConsole("The model file for the noise reduction filter is not found. It should be at " +  firstRnnnFile.getPath() +
-                    ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models","",Color.RED);
+        // The models ship inside the application and are unpacked on first use, so this only
+        // fails if the folder installed on the machine is unreadable and unpacking failed too
+        for (String modelName : new String[]{NoiseModels.SPEECH_MODEL, NoiseModels.GENERAL_NOISE_MODEL}) {
+            File modelFile = NoiseModels.modelFile(modelName);
+            if (!modelFile.exists()) {
+                appendToConsole("The model file for the noise reduction filter is not found. It should be at " + modelFile.getPath() +
+                        ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models","",Color.RED);
+                result = false;
+            }
+        }
+        if(!Host.isFfmpegAvailable(settings.getFfmpegPath())) {
+            appendToConsole("ffmpeg could not be started. Install it, or set ffmpegPath in settings.ini to its full path.","",Color.RED);
             result = false;
         }
-        File secondRnnfile = new File("C:/rnmodel/bd.rnnn");
-        if(!secondRnnfile.exists()) {
-            appendToConsole("The model file for the noise reduction filter is not found. It should be at " + secondRnnfile.getPath() +
-                    ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models","",Color.RED);
+        if(!checkAudioSampleRates()) {
+            result = false;
+        }
+        if(Host.isMac() && (inputVideoInputMode.getValue()==null || inputVideoInputMode.getValue().isEmpty())) {
+            appendToConsole("The video device did not report any capture mode. If it is a virtual camera, start the application that provides it first.","",Color.RED);
             result = false;
         }
         if(inputVideoPid.getText().isEmpty()) {
@@ -1559,18 +1852,25 @@ public class StreamingGUI extends Application {
             int endIndex = text.toString().indexOf(",", startIndex);
             if (startIndex != -1 && endIndex != -1) {
                 String startTime = text.toString().substring(startIndex+ "start: ".length(), endIndex);
-                if (firstOpeningDeviceStartupTime == 0) {
-                    firstOpeningDeviceStartupTime = (int) (Double.parseDouble(startTime) * 1000);
+                int startMillis = parseStartMillis(startTime);
+                if (startMillis != Integer.MIN_VALUE) {
+                    if (firstOpeningDeviceStartupTime == 0) {
+                        firstOpeningDeviceStartupTime = startMillis;
+                    }
+                    if (secondOpeningDeviceStartupTime == 0) {
+                        secondOpeningDeviceStartupTime = startMillis;
+                    }
+                    else {
+                        firstOpeningDeviceStartupTime = secondOpeningDeviceStartupTime;
+                        secondOpeningDeviceStartupTime = startMillis;
+                    }
+                    int timeToOpen = secondOpeningDeviceStartupTime-firstOpeningDeviceStartupTime;
+                    // DirectShow counts from the start of the capture, AVFoundation from when the
+                    // device itself was powered up, so only a plausible gap says anything useful
+                    if (timeToOpen > 0 && timeToOpen <= MAX_PLAUSIBLE_DEVICE_OPEN_MS) {
+                        appendToConsole("Time to open the device: " + timeToOpen+" ms","",Color.RED );
+                    }
                 }
-                if (secondOpeningDeviceStartupTime == 0) {
-                    secondOpeningDeviceStartupTime = (int) (Double.parseDouble(startTime) * 1000);
-                     }
-                else {
-                    firstOpeningDeviceStartupTime = secondOpeningDeviceStartupTime;
-                    secondOpeningDeviceStartupTime = (int) (Double.parseDouble(startTime) * 1000);
-                }
-                int timeToOpen = secondOpeningDeviceStartupTime-firstOpeningDeviceStartupTime;
-                appendToConsole("Time to open the device: " + timeToOpen+" ms","",Color.RED );
             }
         }
         if (warningMatcher.find()) text.setFill(Color.ORANGE);

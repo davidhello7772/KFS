@@ -28,6 +28,8 @@ public class SettingsUtil {
     public static final String AUDIO_SOURCE_NOT_USED = "Not Used";
     public static final String AUDIO_SOURCE_NOT_SELECTED = "Not Selected";
     public static final String AUDIO_CHANNEL_STEREO = "Stereo";
+    /** Prefix for the channels of a device with more than two inputs, e.g. "Ch 7" on a mixer. */
+    public static final String AUDIO_CHANNEL_PREFIX = "Ch ";
     private static final String SETTINGS_FILE_EXTENSION = ".ini";
 
     private static final String KEY_FORMAT = "settingsFormat";
@@ -47,6 +49,30 @@ public class SettingsUtil {
         return key.replaceAll("[^a-zA-Z0-9-]", "_");
     }
 
+    /** The label stored for the n-th input of a multi-channel device, counting from one. */
+    public static String audioChannelName(int oneBasedChannel) {
+        return AUDIO_CHANNEL_PREFIX + oneBasedChannel;
+    }
+
+    /**
+     * The input channel a language reads from, counting from zero. Left, Join and anything unset
+     * take the first channel, which is what the stereo-only version of the application did.
+     */
+    public static int audioChannelIndex(String channel) {
+        if (AUDIO_CHANNEL_RIGHT.equals(channel)) {
+            return 1;
+        }
+        if (channel != null && channel.startsWith(AUDIO_CHANNEL_PREFIX)) {
+            try {
+                int oneBased = Integer.parseInt(channel.substring(AUDIO_CHANNEL_PREFIX.length()).trim());
+                return Math.max(0, oneBased - 1);
+            } catch (NumberFormatException e) {
+                logger.warn("Unreadable audio channel '{}', using the first channel", channel);
+            }
+        }
+        return 0;
+    }
+
     public static void saveSettings(Settings settings, String key) {
         String sanitizedFileName = sanitizeKey(key) + SETTINGS_FILE_EXTENSION;
         backupLegacyFile(sanitizedFileName);
@@ -55,9 +81,11 @@ public class SettingsUtil {
 
         // Group 1: Basic video/audio settings
         sortedProps.put("videoSource", settings.getVideoSource());
+        sortedProps.put("videoInputMode", settings.getVideoInputMode());
         sortedProps.put("videoBitrate", settings.getVideoBitrate());
         sortedProps.put("videoBuffer", settings.getVideoBuffer());
         sortedProps.put("audioBitrate", settings.getAudioBitrate());
+        sortedProps.put("audioSampleRate", settings.getAudioSampleRate());
         sortedProps.put("audioBuffer", settings.getAudioBuffer());
         sortedProps.put("fps", settings.getFps());
         sortedProps.put("videoPID", settings.getVideoPID());
@@ -77,6 +105,7 @@ public class SettingsUtil {
         sortedProps.put("fileDef", settings.getFileDef());
 
         // Group 4: System settings
+        sortedProps.put("ffmpegPath", settings.getFfmpegPath());
         sortedProps.put("developmentMode", String.valueOf(settings.isDevelopmentMode()));
         sortedProps.put("levelMeterWidthScale", String.valueOf(settings.getLevelMeterWidthScale()));
         sortedProps.put("levelMeterHeightScale", String.valueOf(settings.getLevelMeterHeightScale()));
@@ -332,6 +361,8 @@ public class SettingsUtil {
 
     private static void loadGeneralSettings(Properties props, Settings settings) {
         settings.setVideoSource(props.getProperty("videoSource", ""));
+        settings.setVideoInputMode(props.getProperty("videoInputMode", ""));
+        settings.setFfmpegPath(props.getProperty("ffmpegPath", ""));
         settings.setVideoBitrate(props.getProperty("videoBitrate", ""));
         settings.setVideoBuffer(props.getProperty("videoBuffer", ""));
         settings.setAudioBuffer(props.getProperty("audioBuffer", ""));
@@ -347,6 +378,7 @@ public class SettingsUtil {
         settings.setSrtURL(props.getProperty("srtURL", ""));
         settings.setOutputDirectory(props.getProperty("outputDirectory", ""));
         settings.setAudioBitrate(props.getProperty("audioBitrate", ""));
+        settings.setAudioSampleRate(props.getProperty("audioSampleRate", "48000"));
         settings.setFps(props.getProperty("fps", ""));
         settings.setDevelopmentMode(Boolean.parseBoolean(props.getProperty("developmentMode", "false")));
         settings.setLevelMeterWidthScale(parseDouble(props, "levelMeterWidthScale", settings.getLevelMeterWidthScale()));

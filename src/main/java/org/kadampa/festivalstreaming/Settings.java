@@ -102,6 +102,10 @@ public class Settings implements Serializable {
     private final Map<String, String> languageColors = new HashMap<>();
     private final Map<String,String> noiseReductionLevel = new HashMap<>();
     private String videoSource;
+    /** The AVFoundation capture mode, as "1920x1080@30". Only meaningful on macOS. */
+    private String videoInputMode;
+    /** An explicit ffmpeg binary, for when it is not on the PATH. Empty means "find it". */
+    private String ffmpegPath;
     private String videoBitrate;
     private String videoBuffer;
     private String audioBuffer;
@@ -116,6 +120,8 @@ public class Settings implements Serializable {
     private String srtURL;
     private String outputDirectory;
     private String audioBitrate; // Add audio bitrate field
+    /** The rate the capture devices run at and the recording is encoded at. */
+    private String audioSampleRate = "48000";
     private String fps; // Add FPS field
     private String enMixDelay;
     private boolean developmentMode = false;
@@ -151,6 +157,22 @@ public class Settings implements Serializable {
 
     public void setVideoSource(String videoSource) {
         this.videoSource = videoSource;
+    }
+
+    public String getVideoInputMode() {
+        return Objects.requireNonNullElse(videoInputMode, "");
+    }
+
+    public void setVideoInputMode(String videoInputMode) {
+        this.videoInputMode = videoInputMode;
+    }
+
+    public String getFfmpegPath() {
+        return Objects.requireNonNullElse(ffmpegPath, "");
+    }
+
+    public void setFfmpegPath(String ffmpegPath) {
+        this.ffmpegPath = ffmpegPath;
     }
 
     public String getDelay() {
@@ -230,6 +252,14 @@ public class Settings implements Serializable {
 
     public void setAudioBitrate(String audioBitrate) {
         this.audioBitrate = audioBitrate;
+    }
+
+    public String getAudioSampleRate() {
+        return Objects.requireNonNullElse(audioSampleRate, "48000");
+    }
+
+    public void setAudioSampleRate(String audioSampleRate) {
+        this.audioSampleRate = audioSampleRate;
     }
 
     public String getFps() {

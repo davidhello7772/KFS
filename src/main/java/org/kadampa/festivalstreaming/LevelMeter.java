@@ -898,37 +898,29 @@ public class LevelMeter {
         double maxSample = 0.0;
         int channels = format.getChannels();
         int frameSize = format.getFrameSize();
+        int bitDepth = format.getSampleSizeInBits();
+        if (bitDepth != 16 && bitDepth != 24) {
+            return MIN_DB;
+        }
+        double fullScale = AudioSamples.fullScale(bitDepth) + 1;
+
+        // Left and Right are the two halves of a stereo cable, "Ch n" is one input of a mixer,
+        // and anything else (Join, Stereo, unset) watches whichever side is loudest
+        boolean bothChannels = channels > 1
+                && !SettingsUtil.AUDIO_CHANNEL_LEFT.equalsIgnoreCase(channel)
+                && !SettingsUtil.AUDIO_CHANNEL_RIGHT.equalsIgnoreCase(channel)
+                && !(channel != null && channel.startsWith(SettingsUtil.AUDIO_CHANNEL_PREFIX));
+        int selectedChannel = channels == 1 ? 0
+                : Math.min(SettingsUtil.audioChannelIndex(channel), channels - 1);
 
         for (int i = 0; i < bytesRead - frameSize + 1; i += frameSize) {
-            if (format.getSampleSizeInBits() == 16) {
-                short leftSample = (short) ((buffer[i + 1] << 8) | (buffer[i] & 0xFF));
-                double leftAbs = Math.abs(leftSample / 32768.0);
-                if (channels == 1) {
-                    maxSample = Math.max(maxSample, leftAbs);
-                    continue;
-                }
-                short rightSample = (short) ((buffer[i + 3] << 8) | (buffer[i + 2] & 0xFF));
-                double rightAbs = Math.abs(rightSample / 32768.0);
-
-                if (SettingsUtil.AUDIO_CHANNEL_LEFT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, leftAbs);
-                else if (SettingsUtil.AUDIO_CHANNEL_RIGHT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, rightAbs);
-                else maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
-
-            } else if (format.getSampleSizeInBits() == 24) {
-                int leftSample = ((buffer[i + 2] << 16) | ((buffer[i + 1] & 0xFF) << 8) | (buffer[i] & 0xFF));
-                if ((leftSample & 0x800000) != 0) leftSample |= 0xFF000000;
-                double leftAbs = Math.abs(leftSample / 8388608.0);
-                if (channels == 1) {
-                    maxSample = Math.max(maxSample, leftAbs);
-                    continue;
-                }
-                int rightSample = ((buffer[i + 5] << 16) | ((buffer[i + 4] & 0xFF) << 8) | (buffer[i + 3] & 0xFF));
-                if ((rightSample & 0x800000) != 0) rightSample |= 0xFF000000;
-                double rightAbs = Math.abs(rightSample / 8388608.0);
-
-                if (SettingsUtil.AUDIO_CHANNEL_LEFT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, leftAbs);
-                else if (SettingsUtil.AUDIO_CHANNEL_RIGHT.equalsIgnoreCase(channel)) maxSample = Math.max(maxSample, rightAbs);
-                else maxSample = Math.max(maxSample, Math.max(leftAbs, rightAbs));
+            if (bothChannels) {
+                double left = Math.abs(AudioSamples.readSample(buffer, i, 0, bitDepth) / fullScale);
+                double right = Math.abs(AudioSamples.readSample(buffer, i, 1, bitDepth) / fullScale);
+                maxSample = Math.max(maxSample, Math.max(left, right));
+            } else {
+                double sample = Math.abs(AudioSamples.readSample(buffer, i, selectedChannel, bitDepth) / fullScale);
+                maxSample = Math.max(maxSample, sample);
             }
         }
 

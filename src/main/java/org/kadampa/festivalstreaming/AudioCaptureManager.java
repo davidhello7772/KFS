@@ -1,6 +1,7 @@
 package org.kadampa.festivalstreaming;
 
 import javax.sound.sampled.*;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,7 +17,20 @@ public class AudioCaptureManager {
 
     private final Map<Mixer.Info, DeviceCapture> deviceCaptures = new ConcurrentHashMap<>();
 
+    /** The rate to ask devices for, from the settings. It is also the rate recordings are made at. */
+    private static volatile int preferredSampleRate = 48000;
+
     private AudioCaptureManager() {}
+
+    /**
+     * Sets the rate capture devices are opened at. Takes effect the next time a device is opened,
+     * so it is set from the settings before any meter or recording starts.
+     */
+    public static void setPreferredSampleRate(int sampleRate) {
+        if (sampleRate > 0) {
+            preferredSampleRate = sampleRate;
+        }
+    }
 
     /**
      * Returns the singleton instance of the AudioCaptureManager.
@@ -25,6 +39,29 @@ public class AudioCaptureManager {
      */
     public static AudioCaptureManager getInstance() {
         return INSTANCE;
+    }
+
+    /**
+     * The capture device of a given name, or null when there is none.
+     * <p>
+     * A device usually appears twice, once as a port and once as the line that can actually be
+     * recorded from, so the one with a capture line is the one wanted.
+     */
+    public static Mixer.Info findCaptureDevice(String deviceName) {
+        if (deviceName == null || deviceName.isBlank() || SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName)) {
+            return null;
+        }
+        for (Mixer.Info info : AudioSystem.getMixerInfo()) {
+            if (!deviceName.equals(info.getName())) {
+                continue;
+            }
+            for (Line.Info lineInfo : AudioSystem.getMixer(info).getTargetLineInfo()) {
+                if (TargetDataLine.class.isAssignableFrom(lineInfo.getLineClass())) {
+                    return info;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -145,27 +182,59 @@ public class AudioCaptureManager {
         }
 
         /**
-         * Finds the best supported audio format for capture, preferring higher sample rates and bit depths.
+         * The capture formats to try, best first.
+         * <p>
+         * A device with more than two inputs is a mixer carrying one language per channel, and
+         * all of them have to be captured together: the meters share a single line and each
+         * reads its own channel out of it. A stereo cable keeps the original preferences.
          *
-         * @return The optimal supported AudioFormat, or a fallback format.
+         * @return supported formats in preference order, never empty
          */
-        private AudioFormat findBestCaptureFormat() {
-            AudioFormat[] preferredFormats = {
-                    new AudioFormat(48000, 16, 2, true, false),
-                    new AudioFormat(44100, 16, 2, true, false),
-                    new AudioFormat(48000, 24, 2, true, false),
-                    new AudioFormat(44100, 24, 2, true, false),
-                    new AudioFormat(48000, 16, 1, true, false),
-                    new AudioFormat(44100, 16, 1, true, false),
-            };
+        private List<AudioFormat> findCaptureFormats() {
+            List<AudioFormat> candidates = new ArrayList<>();
+            int deviceChannels = maxDeviceChannels();
+            int preferred = preferredSampleRate;
+            if (deviceChannels > 2) {
+                // CoreAudio converts from whatever the device runs at, so the configured rate
+                // is asked for first and the device's own common rates are only fallbacks
+                for (float rate : new float[]{preferred, 48000, 44100, 96000}) {
+                    candidates.add(new AudioFormat(rate, 16, deviceChannels, true, false));
+                }
+                candidates.add(new AudioFormat(preferred, 24, deviceChannels, true, false));
+            }
+            candidates.add(new AudioFormat(preferred, 16, 2, true, false));
+            candidates.add(new AudioFormat(48000, 16, 2, true, false));
+            candidates.add(new AudioFormat(44100, 16, 2, true, false));
+            candidates.add(new AudioFormat(48000, 24, 2, true, false));
+            candidates.add(new AudioFormat(44100, 24, 2, true, false));
+            candidates.add(new AudioFormat(preferred, 16, 1, true, false));
+            candidates.add(new AudioFormat(48000, 16, 1, true, false));
+            candidates.add(new AudioFormat(44100, 16, 1, true, false));
 
-            for (AudioFormat format : preferredFormats) {
-                DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
-                if (AudioSystem.getMixer(mixerInfo).isLineSupported(info)) {
-                    return format;
+            Mixer mixer = AudioSystem.getMixer(mixerInfo);
+            List<AudioFormat> supported = new ArrayList<>();
+            for (AudioFormat format : candidates) {
+                if (mixer.isLineSupported(new DataLine.Info(TargetDataLine.class, format))) {
+                    supported.add(format);
                 }
             }
-            return new AudioFormat(44100, 16, 2, true, false); // Fallback
+            if (supported.isEmpty()) {
+                supported.add(new AudioFormat(44100, 16, 2, true, false)); // Fallback
+            }
+            return supported;
+        }
+
+        /** How many inputs this device offers, which is how many languages it can carry. */
+        private int maxDeviceChannels() {
+            int maximum = 0;
+            for (Line.Info lineInfo : AudioSystem.getMixer(mixerInfo).getTargetLineInfo()) {
+                if (lineInfo instanceof DataLine.Info dataLineInfo) {
+                    for (AudioFormat format : dataLineInfo.getFormats()) {
+                        maximum = Math.max(maximum, format.getChannels());
+                    }
+                }
+            }
+            return maximum;
         }
 
         /**
@@ -233,37 +302,23 @@ public class AudioCaptureManager {
             int frameCount = bytesRead / inputFrameSize;
             int outputBytes = frameCount * outputFrameSize;
 
+            // Default to stereo if channel is not specified
+            if (channel == null) {
+                channel = SettingsUtil.AUDIO_CHANNEL_STEREO;
+            }
+            // Stereo mixes both sides; anything else names a single input to listen to
+            boolean mixBothChannels = inputChannels == 2
+                    && !SettingsUtil.AUDIO_CHANNEL_LEFT.equals(channel)
+                    && !SettingsUtil.AUDIO_CHANNEL_RIGHT.equals(channel);
+            int selectedChannel = Math.min(SettingsUtil.audioChannelIndex(channel), inputChannels - 1);
+
             for (int i = 0; i < frameCount; i++) {
-                long leftSample = 0;
-                long rightSample = 0;
-
-                if (inputBitDepth == 16) {
-                    leftSample = (short) ((inputBuffer[i * inputFrameSize] & 0xFF) | (inputBuffer[i * inputFrameSize + 1] << 8));
-                    if (inputChannels == 2) {
-                        rightSample = (short) ((inputBuffer[i * inputFrameSize + 2] & 0xFF) | (inputBuffer[i * inputFrameSize + 3] << 8));
-                    }
-                } else if (inputBitDepth == 24) {
-                    leftSample = (inputBuffer[i * inputFrameSize] & 0xFF) | ((inputBuffer[i * inputFrameSize + 1] & 0xFF) << 8) | (inputBuffer[i * inputFrameSize + 2] << 16);
-                    if ((leftSample & 0x800000) != 0) leftSample |= 0xFFFFFFFFFF000000L; // Sign extend
-                    if (inputChannels == 2) {
-                        rightSample = (inputBuffer[i * inputFrameSize + 3] & 0xFF) | ((inputBuffer[i * inputFrameSize + 4] & 0xFF) << 8) | (inputBuffer[i * inputFrameSize + 5] << 16);
-                        if ((rightSample & 0x800000) != 0) rightSample |= 0xFFFFFFFFFF000000L; // Sign extend
-                    }
-                }
-
                 long monoSample;
-                if (inputChannels == 2) {
-                    // Default to stereo if channel is not specified
-                    if (channel == null) {
-                        channel = "Stereo";
-                    }
-                    monoSample = switch (channel) {
-                        case SettingsUtil.AUDIO_CHANNEL_LEFT -> leftSample;
-                        case SettingsUtil.AUDIO_CHANNEL_RIGHT -> rightSample;
-                        default -> (leftSample + rightSample) / 2;
-                    };
+                if (mixBothChannels) {
+                    monoSample = (AudioSamples.readSample(inputBuffer, i * inputFrameSize, 0, inputBitDepth)
+                            + AudioSamples.readSample(inputBuffer, i * inputFrameSize, 1, inputBitDepth)) / 2;
                 } else {
-                    monoSample = leftSample;
+                    monoSample = AudioSamples.readSample(inputBuffer, i * inputFrameSize, selectedChannel, inputBitDepth);
                 }
 
                 if (outputBitDepth == 16) {
@@ -290,16 +345,7 @@ public class AudioCaptureManager {
             running = true;
             captureThread = new Thread(() -> {
                 try {
-                    captureFormat = findBestCaptureFormat();
-                    DataLine.Info inputInfo = new DataLine.Info(TargetDataLine.class, captureFormat);
-                    inputLine = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(inputInfo);
-
-                    // Increased buffer to 150ms for more stability
-                    float bufferDurationMs = 150.0f;
-                    int inputBufferSize = (int) (captureFormat.getSampleRate() * captureFormat.getFrameSize() * bufferDurationMs / 1000.0f);
-                    inputBufferSize -= inputBufferSize % captureFormat.getFrameSize();
-
-                    inputLine.open(captureFormat, inputBufferSize);
+                    openInputLine();
                     inputLine.start();
                     playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
 
@@ -344,6 +390,38 @@ public class AudioCaptureManager {
             captureThread.setDaemon(true);
             captureThread.setName("AudioCapture-" + mixerInfo.getName());
             captureThread.start();
+        }
+
+        /**
+         * Opens the capture line, walking down the supported formats. A device can advertise a
+         * format it then refuses to open, so being told "supported" is not enough on its own.
+         *
+         * @throws LineUnavailableException if none of the formats could be opened
+         */
+        private void openInputLine() throws LineUnavailableException {
+            LineUnavailableException lastFailure = null;
+            for (AudioFormat format : findCaptureFormats()) {
+                try {
+                    DataLine.Info inputInfo = new DataLine.Info(TargetDataLine.class, format);
+                    TargetDataLine line = (TargetDataLine) AudioSystem.getMixer(mixerInfo).getLine(inputInfo);
+
+                    // Increased buffer to 150ms for more stability
+                    float bufferDurationMs = 150.0f;
+                    int inputBufferSize = (int) (format.getSampleRate() * format.getFrameSize() * bufferDurationMs / 1000.0f);
+                    inputBufferSize -= inputBufferSize % format.getFrameSize();
+
+                    line.open(format, inputBufferSize);
+                    inputLine = line;
+                    captureFormat = format;
+                    return;
+                } catch (LineUnavailableException | IllegalArgumentException e) {
+                    lastFailure = e instanceof LineUnavailableException unavailable
+                            ? unavailable : new LineUnavailableException(e.getMessage());
+                    System.err.println("Could not open " + mixerInfo.getName() + " as " + format + ": " + e.getMessage());
+                }
+            }
+            throw lastFailure != null ? lastFailure
+                    : new LineUnavailableException("No usable capture format for " + mixerInfo.getName());
         }
 
         /**

@@ -1,0 +1,191 @@
+package org.kadampa.festivalstreaming;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * The handful of things that genuinely differ between the Windows streaming machine and a Mac:
+ * which ffmpeg capture device is used, where ffmpeg lives, and where we may write files.
+ * Everything else in the application stays platform neutral.
+ */
+public final class Host {
+
+    private static final Logger logger = LoggerFactory.getLogger(Host.class);
+
+    private static final String OS_NAME = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+
+    private static final Pattern ENCODER_LINE = Pattern.compile("^\\s*V[.A-Z]{5}\\s+(\\S+)");
+
+    /**
+     * A capture device can sit there without ever answering, and these queries run while the user
+     * waits on the interface, so they are given a short deadline. Everything they need is printed
+     * as the device opens, long before this, and whatever arrived by then is used.
+     */
+    private static final int QUERY_TIMEOUT_SECONDS = 4;
+
+    /**
+     * The H.264 encoders offered in the settings, best first, per platform.
+     * <p>
+     * x264 leads on the Mac: measured on real festival footage at 2500kbps it encodes about
+     * 1.2dB better than VideoToolbox, which on this hardware needs roughly half as much bitrate
+     * again to match it. VideoToolbox stays available for a machine short of processor time.
+     */
+    private static final List<String> MAC_VIDEO_ENCODERS = List.of("libx264", "h264_videotoolbox");
+    private static final List<String> WINDOWS_VIDEO_ENCODERS = List.of("libx264", "h264_nvenc");
+
+    /** ffmpeg is expected on the PATH, but a GUI launch on macOS does not inherit the shell PATH. */
+    private static final List<String> MAC_FFMPEG_FALLBACKS = List.of(
+            "/opt/homebrew/bin/ffmpeg",  // Apple Silicon Homebrew
+            "/usr/local/bin/ffmpeg",     // Intel Homebrew
+            "/opt/local/bin/ffmpeg");    // MacPorts
+
+    private Host() {
+    }
+
+    public static boolean isMac() {
+        return OS_NAME.contains("mac");
+    }
+
+    public static boolean isWindows() {
+        return OS_NAME.contains("win");
+    }
+
+    /**
+     * The ffmpeg capture device: DirectShow on Windows, AVFoundation on macOS. Both are compiled
+     * into the standard ffmpeg builds, so no probing is needed.
+     */
+    public static String captureFormat() {
+        return isMac() ? "avfoundation" : "dshow";
+    }
+
+    /**
+     * A writable per-user directory for the files the application unpacks for itself.
+     * Deliberately hidden and space free so it is safe to inline into an ffmpeg filter string.
+     */
+    public static File userDataDir() {
+        String home = System.getProperty("user.home", ".");
+        if (isWindows()) {
+            String localAppData = System.getenv("LOCALAPPDATA");
+            File base = (localAppData == null || localAppData.isBlank()) ? new File(home) : new File(localAppData);
+            return new File(base, "KadampaFestivalStreaming");
+        }
+        return new File(home, ".kfs");
+    }
+
+    /** Where recordings go when the configured directory does not exist on this machine. */
+    public static String defaultOutputDirectory() {
+        String home = System.getProperty("user.home", ".");
+        return isMac() ? new File(home, "Movies").getPath() : new File(home, "Videos").getPath();
+    }
+
+    /**
+     * Resolves the ffmpeg binary. An explicit setting wins; otherwise we rely on the PATH and
+     * fall back to the usual install locations, which is what makes the app work when it is
+     * started from Finder rather than from a terminal.
+     *
+     * @return the command to hand to ProcessBuilder, never null
+     */
+    public static String ffmpegExecutable(String configuredPath) {
+        if (configuredPath != null && !configuredPath.isBlank()) {
+            return configuredPath.trim();
+        }
+        if (isMac()) {
+            for (String candidate : MAC_FFMPEG_FALLBACKS) {
+                if (new File(candidate).canExecute()) {
+                    return candidate;
+                }
+            }
+        }
+        return "ffmpeg";
+    }
+
+    /**
+     * Whether the resolved ffmpeg can actually be started, so the GUI can say so before the
+     * user presses Start instead of failing with a bare IOException.
+     */
+    public static boolean isFfmpegAvailable(String configuredPath) {
+        return !runFfmpeg(configuredPath, "-version").isEmpty();
+    }
+
+    /**
+     * The video encoders to offer, in preference order, keeping only those this ffmpeg build
+     * actually has. Homebrew and distribution builds vary, and NVENC is impossible on a Mac.
+     */
+    public static List<String> videoEncoders(String configuredPath) {
+        List<String> preferred = isMac() ? MAC_VIDEO_ENCODERS : WINDOWS_VIDEO_ENCODERS;
+        Set<String> available = availableVideoEncoders(configuredPath);
+        if (available.isEmpty()) {
+            return preferred;  // ffmpeg could not be queried; offer the list and let it fail loudly
+        }
+        List<String> result = new ArrayList<>(preferred.stream().filter(available::contains).toList());
+        return result.isEmpty() ? preferred : result;
+    }
+
+    private static Set<String> availableVideoEncoders(String configuredPath) {
+        Set<String> encoders = new LinkedHashSet<>();
+        for (String line : runFfmpeg(configuredPath, "-encoders")) {
+            Matcher matcher = ENCODER_LINE.matcher(line);
+            if (matcher.find()) {
+                encoders.add(matcher.group(1));
+            }
+        }
+        return encoders;
+    }
+
+    /**
+     * Runs ffmpeg and returns its merged output. Used for the queries whose answer ffmpeg writes
+     * to stderr and which end in an expected non-zero exit, so the exit code is not checked.
+     */
+    static List<String> runFfmpeg(String configuredPath, String... arguments) {
+        List<String> command = new ArrayList<>();
+        command.add(ffmpegExecutable(configuredPath));
+        command.add("-hide_banner");
+        command.addAll(List.of(arguments));
+        List<String> lines = Collections.synchronizedList(new ArrayList<>());
+        try {
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            // The output is drained on its own thread so a device that never answers cannot
+            // block the caller: these queries run while the user is waiting on the interface
+            Thread reader = new Thread(() -> {
+                try (BufferedReader in = new BufferedReader(
+                        new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        lines.add(line);
+                    }
+                } catch (IOException ignored) {
+                    // the process was killed; whatever was read already is what we use
+                }
+            });
+            reader.setDaemon(true);
+            reader.start();
+            if (!process.waitFor(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                logger.warn("ffmpeg did not answer within {}s, giving up on: {}",
+                        QUERY_TIMEOUT_SECONDS, String.join(" ", arguments));
+                process.destroyForcibly();
+                process.waitFor(2, TimeUnit.SECONDS);
+            }
+            reader.join(1000);
+        } catch (IOException e) {
+            logger.error("Could not run ffmpeg ({})", command.get(0), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return new ArrayList<>(lines);
+    }
+}
