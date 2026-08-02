@@ -53,6 +53,15 @@ public class StreamRecorderRunnable implements Runnable {
     /** On macOS the application reads the audio device and feeds ffmpeg through this. */
     private AudioPipe audioPipe;
     private String pipedDeviceName;
+    /**
+     * On Linux a multi-channel device is read by pw-record and piped into ffmpeg, because the
+     * sound server's PulseAudio interface scrambles channel maps above eight channels: asked for
+     * the Qu-5's 32, it delivers silence where the native reader delivers every channel in order
+     * (verified live on the machine). Simple devices keep the pulse input.
+     */
+    private static final int PULSE_CHANNEL_LIMIT = 8;
+    private List<String> pwRecordCommand;
+    private Process pwRecordProcess;
     // Built on the FX thread when the Information tab is filled, consumed by the encoding thread
     private volatile List<String> preparedCommand;
     private Process process = null;
@@ -69,9 +78,17 @@ public class StreamRecorderRunnable implements Runnable {
     @Override
     public void run() {
         List<String> command = takeCommand();
-        ProcessBuilder processBuilder = new ProcessBuilder(command);
         try {
-            process = processBuilder.start();
+            if (pwRecordCommand != null) {
+                // pw-record's output becomes ffmpeg's standard input
+                ProcessBuilder recorder = new ProcessBuilder(pwRecordCommand)
+                        .redirectError(ProcessBuilder.Redirect.DISCARD);
+                List<Process> pipeline = ProcessBuilder.startPipeline(List.of(recorder, new ProcessBuilder(command)));
+                pwRecordProcess = pipeline.get(0);
+                process = pipeline.get(1);
+            } else {
+                process = new ProcessBuilder(command).start();
+            }
             if (audioPipe != null) {
                 audioPipe.start(process.getOutputStream());
             }
@@ -89,6 +106,17 @@ public class StreamRecorderRunnable implements Runnable {
                 if(monitor!=null) monitor.stopMonitoring();
                 stop();
             }
+        } finally {
+            // However ffmpeg went away - clean exit, failed start, or crash - the recorder
+            // feeding it must not stay behind
+            stopPwRecord();
+        }
+    }
+
+    private void stopPwRecord() {
+        if (pwRecordProcess != null) {
+            pwRecordProcess.destroy();
+            pwRecordProcess = null;
         }
     }
 
@@ -171,6 +199,7 @@ public class StreamRecorderRunnable implements Runnable {
     }
 
     private List<String> initialiseFFMpegCommand() {
+        pwRecordCommand = null;
         List<String> devicesListCommand = new ArrayList<>();
         List<String> filterComplexCommand = new ArrayList<>();
         List<String> mapCommand = new ArrayList<>();
@@ -362,8 +391,8 @@ public class StreamRecorderRunnable implements Runnable {
 
     /**
      * The encoder settings a distributor expects from a live stream, none of which ffmpeg does by
-     * default. Only on macOS: the Windows machine has been streaming happily for years and its
-     * command is deliberately left alone.
+     * default. Not on Windows: that machine has been streaming happily for years and its command
+     * is deliberately left alone.
      * <p>
      * Castr's requirements are constant bitrate, a two second keyframe interval and x264, and the
      * stream was meeting none of them. Without an explicit buffer x264 never switches its rate
@@ -375,7 +404,7 @@ public class StreamRecorderRunnable implements Runnable {
      * too little for everything in between.
      */
     private void addStreamingEncoderSettings(List<String> parameterCommand) {
-        if (!Host.isMac()) {
+        if (Host.isWindows()) {
             return;
         }
         // A one second buffer, which is what OBS uses for constant bitrate
@@ -403,7 +432,8 @@ public class StreamRecorderRunnable implements Runnable {
     /**
      * The video input. DirectShow names the device inside the input URL and negotiates the
      * format itself; AVFoundation takes the name as the URL and refuses to open at all unless
-     * it is given a frame rate and a size it has advertised.
+     * it is given a frame rate and a size it has advertised. Video4Linux2 takes the device path
+     * and accepts a size and format it advertised, clamping the frame rate itself.
      */
     private void addVideoInput(List<String> devicesListCommand) {
         devicesListCommand.add("-rtbufsize");
@@ -425,6 +455,29 @@ public class StreamRecorderRunnable implements Runnable {
             }
             devicesListCommand.add("-i");
             devicesListCommand.add(videoDevice + ":");
+        } else if (Host.isLinux()) {
+            // While ffmpeg is still opening the later inputs, frames from this one have to
+            // queue; the default queue is far too short for that and drops them with a warning
+            devicesListCommand.add("-thread_queue_size");
+            devicesListCommand.add("1024");
+            // The camera stamps frames with the machine's uptime; the sound server stamps its
+            // audio with the time of day. Asking for wallclock stamps here puts the two inputs
+            // on the same clock, so the offsets ffmpeg reports between them mean something
+            devicesListCommand.add("-use_wallclock_as_timestamps");
+            devicesListCommand.add("1");
+            AvFoundationDevices.CaptureMode mode = AvFoundationDevices.CaptureMode.parse(videoInputMode);
+            devicesListCommand.add("-framerate");
+            devicesListCommand.add(String.valueOf(mode != null ? mode.frameRate() : fps));
+            if (mode != null) {
+                devicesListCommand.add("-video_size");
+                devicesListCommand.add(mode.videoSize());
+            }
+            if (videoInputPixelFormat != null && !videoInputPixelFormat.isBlank()) {
+                devicesListCommand.add("-input_format");
+                devicesListCommand.add(videoInputPixelFormat);
+            }
+            devicesListCommand.add("-i");
+            devicesListCommand.add(V4l2Devices.devicePath(videoDevice));
         } else {
             devicesListCommand.add("-i");
             devicesListCommand.add("video=" + videoDevice);
@@ -434,7 +487,9 @@ public class StreamRecorderRunnable implements Runnable {
     /**
      * The audio input. On Windows ffmpeg opens the device itself. On macOS it is handed the
      * samples over its standard input instead, because its AVFoundation input loses a large and
-     * varying share of the audio of a multi-channel device: see {@link AudioPipe}.
+     * varying share of the audio of a multi-channel device: see {@link AudioPipe}. On Linux it
+     * reads from the sound server, which shares the device with the level meters and resamples
+     * every device to the configured rate whatever its native one: see {@link PulseAudioDevices}.
      */
     private void addAudioInput(List<String> devicesListCommand, String audioDevice) {
         if (Host.isMac()) {
@@ -449,12 +504,66 @@ public class StreamRecorderRunnable implements Runnable {
             devicesListCommand.add("pipe:0");
             return;
         }
+        if (Host.isLinux()) {
+            int channels = linuxChannelCount(audioDevice);
+            String sourceName = PulseAudioDevices.resolveName(ffmpegPath, audioDevice);
+            if (channels > PULSE_CHANNEL_LIMIT && pwRecordCommand == null) {
+                // The mixer: read natively and hand the samples to ffmpeg over its standard
+                // input. pw-record resamples to the configured rate like the server would.
+                pwRecordCommand = List.of("pw-record",
+                        "--target", sourceName != null ? sourceName : audioDevice,
+                        "--rate", audioSampleRate,
+                        "--channels", String.valueOf(channels),
+                        "--format", "s16",
+                        "-");
+                devicesListCommand.add("-f");
+                devicesListCommand.add("s16le");
+                devicesListCommand.add("-thread_queue_size");
+                devicesListCommand.add("1024");
+                devicesListCommand.add("-ar");
+                devicesListCommand.add(audioSampleRate);
+                devicesListCommand.add("-ac");
+                devicesListCommand.add(String.valueOf(channels));
+                devicesListCommand.add("-i");
+                devicesListCommand.add("pipe:0");
+                return;
+            }
+            devicesListCommand.add("-f");
+            devicesListCommand.add("pulse");
+            devicesListCommand.add("-thread_queue_size");
+            devicesListCommand.add("1024");
+            // The server resamples this device to the configured rate, so devices with
+            // different native rates all arrive uniform
+            devicesListCommand.add("-sample_rate");
+            devicesListCommand.add(audioSampleRate);
+            devicesListCommand.add("-channels");
+            devicesListCommand.add(String.valueOf(channels));
+            devicesListCommand.add("-i");
+            devicesListCommand.add(sourceName != null ? sourceName : audioDevice);
+            return;
+        }
         devicesListCommand.add("-rtbufsize");
         devicesListCommand.add(audioBufferSize);
         devicesListCommand.add("-f");
         devicesListCommand.add("dshow");
         devicesListCommand.add("-i");
         devicesListCommand.add("audio=" + audioDevice);
+    }
+
+    /**
+     * How many channels to ask the sound server for: what the hardware has, and never fewer
+     * than the highest channel a language actually reads from this device.
+     */
+    private int linuxChannelCount(String audioDevice) {
+        int highestUsed = 0;
+        for (int index = 0; index < audioDevicesList.size(); index++) {
+            if (audioDevicesList.get(index).equals(audioDevice)) {
+                highestUsed = Math.max(highestUsed,
+                        SettingsUtil.audioChannelIndex(audioInputsChannel.get(index)) + 1);
+            }
+        }
+        return Math.max(Math.max(2, highestUsed),
+                PulseAudioDevices.channelCount(ffmpegPath, audioDevice));
     }
 
     /**
@@ -472,6 +581,7 @@ public class StreamRecorderRunnable implements Runnable {
 
     public void stop() {
         closeAudioPipe();
+        stopPwRecord();
         if (process != null) {
             destroyProcessAndChildren(process);
         }

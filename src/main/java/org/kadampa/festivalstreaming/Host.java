@@ -19,9 +19,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The handful of things that genuinely differ between the Windows streaming machine and a Mac:
- * which ffmpeg capture device is used, where ffmpeg lives, and where we may write files.
- * Everything else in the application stays platform neutral.
+ * The handful of things that genuinely differ between the Windows streaming machine, a Mac and a
+ * Linux box: which ffmpeg capture device is used, where ffmpeg lives, and where we may write
+ * files. Everything else in the application stays platform neutral.
  */
 public final class Host {
 
@@ -47,12 +47,25 @@ public final class Host {
      */
     private static final List<String> MAC_VIDEO_ENCODERS = List.of("libx264", "h264_videotoolbox");
     private static final List<String> WINDOWS_VIDEO_ENCODERS = List.of("libx264", "h264_nvenc");
+    /**
+     * QSV takes ordinary frames and uploads them itself, so it works with the existing filter
+     * graph wherever the Intel driver stack is complete; like NVENC on Windows it is offered and
+     * fails at start when the hardware or drivers are missing. VAAPI is deliberately not offered:
+     * it only accepts frames already on the GPU, which the filter graph does not produce.
+     */
+    private static final List<String> LINUX_VIDEO_ENCODERS = List.of("libx264", "h264_qsv", "h264_nvenc");
 
     /** ffmpeg is expected on the PATH, but a GUI launch on macOS does not inherit the shell PATH. */
     private static final List<String> MAC_FFMPEG_FALLBACKS = List.of(
             "/opt/homebrew/bin/ffmpeg",  // Apple Silicon Homebrew
             "/usr/local/bin/ffmpeg",     // Intel Homebrew
             "/opt/local/bin/ffmpeg");    // MacPorts
+
+    /** The same for a Linux desktop launch, whose PATH is not the shell's either. */
+    private static final List<String> LINUX_FFMPEG_FALLBACKS = List.of(
+            "/usr/bin/ffmpeg",           // distribution package
+            "/usr/local/bin/ffmpeg",     // built from source
+            "/snap/bin/ffmpeg");         // snap package
 
     private Host() {
     }
@@ -65,12 +78,21 @@ public final class Host {
         return OS_NAME.contains("win");
     }
 
+    public static boolean isLinux() {
+        return OS_NAME.contains("linux");
+    }
+
     /**
-     * The ffmpeg capture device: DirectShow on Windows, AVFoundation on macOS. Both are compiled
-     * into the standard ffmpeg builds, so no probing is needed.
+     * The ffmpeg video capture device: DirectShow on Windows, AVFoundation on macOS, Video4Linux2
+     * on Linux. All are compiled into the standard ffmpeg builds, so no probing is needed. On
+     * Windows the same DirectShow input also captures the audio; Linux audio goes through the
+     * sound server instead: see {@link PulseAudioDevices}.
      */
     public static String captureFormat() {
-        return isMac() ? "avfoundation" : "dshow";
+        if (isMac()) {
+            return "avfoundation";
+        }
+        return isLinux() ? "v4l2" : "dshow";
     }
 
     /**
@@ -104,11 +126,12 @@ public final class Host {
         if (configuredPath != null && !configuredPath.isBlank()) {
             return configuredPath.trim();
         }
-        if (isMac()) {
-            for (String candidate : MAC_FFMPEG_FALLBACKS) {
-                if (new File(candidate).canExecute()) {
-                    return candidate;
-                }
+        List<String> fallbacks = isMac() ? MAC_FFMPEG_FALLBACKS
+                : isLinux() ? LINUX_FFMPEG_FALLBACKS
+                : List.of();
+        for (String candidate : fallbacks) {
+            if (new File(candidate).canExecute()) {
+                return candidate;
             }
         }
         return "ffmpeg";
@@ -127,7 +150,9 @@ public final class Host {
      * actually has. Homebrew and distribution builds vary, and NVENC is impossible on a Mac.
      */
     public static List<String> videoEncoders(String configuredPath) {
-        List<String> preferred = isMac() ? MAC_VIDEO_ENCODERS : WINDOWS_VIDEO_ENCODERS;
+        List<String> preferred = isMac() ? MAC_VIDEO_ENCODERS
+                : isLinux() ? LINUX_VIDEO_ENCODERS
+                : WINDOWS_VIDEO_ENCODERS;
         Set<String> available = availableVideoEncoders(configuredPath);
         if (available.isEmpty()) {
             return preferred;  // ffmpeg could not be queried; offer the list and let it fail loudly
@@ -156,6 +181,14 @@ public final class Host {
         command.add(ffmpegExecutable(configuredPath));
         command.add("-hide_banner");
         command.addAll(List.of(arguments));
+        return runCommand(command);
+    }
+
+    /**
+     * Runs any short query command with the same deadline and drain safety as the ffmpeg
+     * queries, and an empty answer instead of an exception when the program is not there.
+     */
+    static List<String> runCommand(List<String> command) {
         List<String> lines = Collections.synchronizedList(new ArrayList<>());
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
@@ -175,14 +208,14 @@ public final class Host {
             reader.setDaemon(true);
             reader.start();
             if (!process.waitFor(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                logger.warn("ffmpeg did not answer within {}s, giving up on: {}",
-                        QUERY_TIMEOUT_SECONDS, String.join(" ", arguments));
+                logger.warn("No answer within {}s, giving up on: {}",
+                        QUERY_TIMEOUT_SECONDS, String.join(" ", command));
                 process.destroyForcibly();
                 process.waitFor(2, TimeUnit.SECONDS);
             }
             reader.join(1000);
         } catch (IOException e) {
-            logger.error("Could not run ffmpeg ({})", command.get(0), e);
+            logger.error("Could not run {}", command.get(0), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

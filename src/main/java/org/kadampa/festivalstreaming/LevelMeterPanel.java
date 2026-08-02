@@ -405,15 +405,9 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
     }
 
     private Mixer.Info getMixerInfo(String mixerName) {
-        if (mixerName == null || "Not Used".equals(mixerName)) {
-            return null;
-        }
-        for (Mixer.Info info : AudioSystem.getMixerInfo()) {
-            if (mixerName.equals(info.getName())) {
-                return info;
-            }
-        }
-        return null;
+        // One resolver for the whole application: it also insists on a capture line, so a
+        // playback device sharing the name can no longer be picked up by mistake
+        return AudioCaptureManager.findCaptureDevice(mixerName);
     }
 
     public void closeVUMeters() {

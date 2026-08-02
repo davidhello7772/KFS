@@ -73,9 +73,29 @@ public class SettingsUtil {
         return 0;
     }
 
+    /**
+     * Where the settings live: the per-user data directory, so the same file is found wherever
+     * the application is started from. Older versions wrote to the working directory, which a
+     * desktop launcher makes somewhere else entirely; a file still there is read until the next
+     * save rewrites it in its new home, and then stays behind as an inert backup.
+     */
+    private static File settingsFile(String fileName) {
+        File preferred = new File(Host.userDataDir(), fileName);
+        if (!preferred.exists()) {
+            File legacy = new File(fileName);
+            if (legacy.exists()) {
+                return legacy;
+            }
+        }
+        return preferred;
+    }
+
     public static void saveSettings(Settings settings, String key) {
         String sanitizedFileName = sanitizeKey(key) + SETTINGS_FILE_EXTENSION;
-        backupLegacyFile(sanitizedFileName);
+        File settingsFile = new File(Host.userDataDir(), sanitizedFileName);
+        //noinspection ResultOfMethodCallIgnored
+        settingsFile.getParentFile().mkdirs();
+        backupLegacyFile(settingsFile);
         // Use LinkedHashMap to maintain insertion order for grouping
         Map<String, String> sortedProps = new LinkedHashMap<>();
 
@@ -118,7 +138,7 @@ public class SettingsUtil {
         sortedProps.put("meterThreshold.enMix.yellow", String.valueOf(settings.getEnMixMeterYellowThresholdDb()));
         sortedProps.put("meterThreshold.enMix.red", String.valueOf(settings.getEnMixMeterRedThresholdDb()));
 
-        try (FileOutputStream out = new FileOutputStream(sanitizedFileName);
+        try (FileOutputStream out = new FileOutputStream(settingsFile);
              OutputStreamWriter writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)) {
 
             // Custom store method to maintain order and add comments
@@ -131,7 +151,7 @@ public class SettingsUtil {
             // Write basic settings with section header
             writer.write("\n# === VIDEO AND AUDIO SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"videoSource", "videoBitrate", "videoBuffer", "audioBitrate", "audioBuffer", "fps", "videoPID", "pixFormat", "encoder"});
+                new String[]{"videoSource", "videoInputMode", "videoBitrate", "videoBuffer", "audioBitrate", "audioSampleRate", "audioBuffer", "fps", "videoPID", "pixFormat", "encoder"});
 
             writer.write("\n# === TIMING SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
@@ -143,7 +163,7 @@ public class SettingsUtil {
 
             writer.write("\n# === SYSTEM SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"developmentMode", "levelMeterWidthScale", "levelMeterHeightScale"});
+                new String[]{"ffmpegPath", "developmentMode", "levelMeterWidthScale", "levelMeterHeightScale"});
 
             writer.write("\n# === LEVEL METER ZONE THRESHOLDS (dB) ===\n");
             writer.write("# Below green = grey zone, then green, yellow and red zones.\n");
@@ -170,8 +190,7 @@ public class SettingsUtil {
 
     /** Keeps a copy of the previous file the first time it is rewritten in the block format, so a
      *  rollback to an older version of the application can be repaired by hand. */
-    private static void backupLegacyFile(String fileName) {
-        File settingsFile = new File(fileName);
+    private static void backupLegacyFile(File settingsFile) {
         if (!settingsFile.exists()) {
             return;
         }
@@ -180,19 +199,19 @@ public class SettingsUtil {
              InputStreamReader reader = new InputStreamReader(in, StandardCharsets.UTF_8)) {
             props.load(reader);
         } catch (IOException e) {
-            logger.warn("Could not read {} before rewriting it: {}", fileName, e.getMessage());
+            logger.warn("Could not read {} before rewriting it: {}", settingsFile, e.getMessage());
             return;
         }
         if (readFormat(props) >= FORMAT_V2) {
             return;
         }
-        File backup = new File(fileName + ".v" + FORMAT_V1 + ".bak");
+        File backup = new File(settingsFile.getPath() + ".v" + FORMAT_V1 + ".bak");
         try {
             Files.copy(settingsFile.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
             logger.info("Migrating {} from format {} to {}, previous file kept as {}",
-                    fileName, FORMAT_V1, FORMAT_V2, backup.getName());
+                    settingsFile, FORMAT_V1, FORMAT_V2, backup.getName());
         } catch (IOException e) {
-            logger.warn("Could not back up {} before migrating it: {}", fileName, e.getMessage());
+            logger.warn("Could not back up {} before migrating it: {}", settingsFile, e.getMessage());
         }
     }
 
@@ -393,7 +412,7 @@ public class SettingsUtil {
 
     public static Settings loadSettings(String key) {
         String sanitizedFileName = sanitizeKey(key) + SETTINGS_FILE_EXTENSION;
-        File settingsFile = new File(sanitizedFileName);
+        File settingsFile = settingsFile(sanitizedFileName);
 
         if (!settingsFile.exists()) {
             Settings.initLanguages(Arrays.asList(Settings.DEFAULT_CONFIGURABLE_LANGUAGES));

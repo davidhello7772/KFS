@@ -202,6 +202,12 @@ public class LevelMeter {
             updateBackgroundStyle(newVal ? originalBackgroundColor.brighter() : originalBackgroundColor);
             updateMonitorButtonStyle();
             if (newVal) {
+                if (mixerInfo == null) {
+                    // Nothing is being captured for this meter, so there is nothing to hear:
+                    // the button must not stay lit pretending otherwise
+                    Platform.runLater(() -> monitoringActive.set(false));
+                    return;
+                }
                 AudioCaptureManager.getInstance().startMonitoring(mixerInfo, channel);
             } else {
                 AudioCaptureManager.getInstance().stopMonitoring(mixerInfo);

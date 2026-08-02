@@ -76,10 +76,6 @@ public final class AvFoundationDevices {
         return deviceNames(ffmpegPath, VIDEO_HEADER, AUDIO_HEADER);
     }
 
-    public static List<String> audioDeviceNames(String ffmpegPath) {
-        return deviceNames(ffmpegPath, AUDIO_HEADER, null);
-    }
-
     /**
      * The modes a video device advertises, largest and fastest first. Empty when the device
      * cannot be queried, which is what a virtual camera does while its host application is not

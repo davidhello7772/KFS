@@ -139,8 +139,8 @@ public class StreamingGUI extends Application {
     private final DoubleProperty barPulse = new SimpleDoubleProperty(1.0);
     private Color barBaseColor = LIVE_GREEN;
     private long lastErrorMillis = 0;
-    private int firstOpeningDeviceStartupTime = 0;
-    private int secondOpeningDeviceStartupTime = 0;
+    private long firstOpeningDeviceStartupTime = 0;
+    private long secondOpeningDeviceStartupTime = 0;
     private boolean playingError;
     /** The format the camera delivers frames in, discovered when the video source is chosen. */
     private String videoInputPixelFormat;
@@ -181,6 +181,16 @@ public class StreamingGUI extends Application {
         inputAudioSampleRate.getItems().addAll("44100", "48000", "88200", "96000");
         // The devices are opened at this rate, so a change has to reach the capture manager
         AudioCaptureManager.setPreferredSampleRate(parseIntOrDefault(settings.getAudioSampleRate(), 48000));
+        // On Linux the capture manager resolves device names through ffmpeg's own device list
+        AudioCaptureManager.setFfmpegPath(settings.getFfmpegPath());
+        // A JVM killed from outside (an IDE rerun, a session logout) never reaches handleClose,
+        // and an ffmpeg left behind keeps the camera busy and the stream ingest occupied
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            Process encoding = streamRecorder.getProcess();
+            if (encoding != null && encoding.isAlive()) {
+                streamRecorder.stop();
+            }
+        }));
         inputAudioSampleRate.valueProperty().addListener((observable, oldValue, newValue) ->
                 AudioCaptureManager.setPreferredSampleRate(parseIntOrDefault(newValue, 48000)));
         inputFramePerSecond = new ComboBox<>();
@@ -370,24 +380,10 @@ public class StreamingGUI extends Application {
         clearOutputButton.setOnAction((ActionEvent e) -> consoleOutputTextFlow.getChildren().clear());
 
 
-        Mixer.Info[] mixerInfos = AudioSystem.getMixerInfo();
+        List<String> audioDeviceNames = audioDeviceNames();
         for (ComboBox<String> audioInput : inputAudioSources) {
             audioInput.getItems().add("Not Used");
-            for (Mixer.Info mixerInfo : mixerInfos) {
-                Mixer mixer = AudioSystem.getMixer(mixerInfo);
-                // Check if this mixer supports any TargetDataLine (input line)
-                Line.Info[] targetLineInfos = mixer.getTargetLineInfo();
-                boolean hasInput = false;
-                for (Line.Info lineInfo : targetLineInfos) {
-                    if (TargetDataLine.class.isAssignableFrom(lineInfo.getLineClass())) {
-                        hasInput = true;
-                        break;
-                    }
-                }
-                if (hasInput) {
-                    audioInput.getItems().add(mixerInfo.getName());
-                }
-            }
+            audioInput.getItems().addAll(audioDeviceNames);
         }
         for (int i = 0; i < inputAudioSources.length; i++) {
             populateChannels(i, inputAudioSources[i].getValue());
@@ -400,13 +396,41 @@ public class StreamingGUI extends Application {
     }
 
     /**
+     * The audio devices to offer for the languages. On Linux they come from the sound server,
+     * because that is where ffmpeg reads them and where every device works whatever holds it:
+     * see {@link PulseAudioDevices}. Elsewhere they are the Java Sound capture mixers, whose
+     * names DirectShow accepts back.
+     */
+    private List<String> audioDeviceNames() {
+        if (Host.isLinux()) {
+            return PulseAudioDevices.descriptions(settings.getFfmpegPath());
+        }
+        List<String> names = new ArrayList<>();
+        for (Mixer.Info mixerInfo : AudioSystem.getMixerInfo()) {
+            Mixer mixer = AudioSystem.getMixer(mixerInfo);
+            // Check if this mixer supports any TargetDataLine (input line)
+            for (Line.Info lineInfo : mixer.getTargetLineInfo()) {
+                if (TargetDataLine.class.isAssignableFrom(lineInfo.getLineClass())) {
+                    names.add(mixerInfo.getName());
+                    break;
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
      * Lists the cameras. The webcam-capture library is the long-standing Windows path; it has no
-     * working macOS driver, and there ffmpeg reports the devices under exactly the names it will
-     * accept back as an input.
+     * working macOS driver, and on macOS and Linux ffmpeg reports the devices under exactly the
+     * names it will accept back as an input.
      */
     private void populateVideoSources() {
         if (Host.isMac()) {
             inputVideoSource.getItems().addAll(AvFoundationDevices.videoDeviceNames(settings.getFfmpegPath()));
+            return;
+        }
+        if (Host.isLinux()) {
+            inputVideoSource.getItems().addAll(V4l2Devices.videoDeviceNames(settings.getFfmpegPath()));
             return;
         }
         List<Webcam> webcams = Webcam.getWebcams();
@@ -471,6 +495,12 @@ public class StreamingGUI extends Application {
         if (deviceName == null || deviceName.isBlank() || SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName)) {
             return 2;
         }
+        if (Host.isLinux()) {
+            // Java Sound only sees the sound server's compatibility device, whose numbers are
+            // what the server could convert to, not what the hardware has; PipeWire knows
+            int channels = PulseAudioDevices.channelCount(settings.getFfmpegPath(), deviceName);
+            return channels > 0 ? channels : 2;
+        }
         for (Mixer.Info mixerInfo : AudioSystem.getMixerInfo()) {
             if (!mixerInfo.getName().equals(deviceName)) {
                 continue;
@@ -491,14 +521,17 @@ public class StreamingGUI extends Application {
         return 2;
     }
 
-    /** Asks the selected camera what it can capture. AVFoundation refuses anything else. */
+    /**
+     * Asks the selected camera what it can capture. AVFoundation refuses anything else;
+     * Video4Linux2 silently converts, so asking keeps the choice honest there too.
+     */
     private void populateVideoInputModes() {
-        if (!Host.isMac()) {
+        if (!Host.isMac() && !Host.isLinux()) {
             return;
         }
         String previous = inputVideoInputMode.getValue();
-        List<String> modes = AvFoundationDevices.supportedModes(settings.getFfmpegPath(), inputVideoSource.getValue())
-                .stream().map(AvFoundationDevices.CaptureMode::toString).toList();
+        List<String> modes = supportedVideoModes().stream()
+                .map(AvFoundationDevices.CaptureMode::toString).toList();
         inputVideoInputMode.getItems().setAll(modes);
         if (previous != null && modes.contains(previous)) {
             inputVideoInputMode.setValue(previous);
@@ -507,9 +540,19 @@ public class StreamingGUI extends Application {
         }
         // The camera also decides what the frames look like on the way in, and ffmpeg's own
         // default is one that cameras rarely offer, so the device is asked which it supports
-        videoInputPixelFormat = AvFoundationDevices.bestPixelFormat(settings.getFfmpegPath(),
-                inputVideoSource.getValue(),
-                AvFoundationDevices.CaptureMode.parse(inputVideoInputMode.getValue()));
+        videoInputPixelFormat = Host.isLinux()
+                ? V4l2Devices.bestPixelFormat(settings.getFfmpegPath(), inputVideoSource.getValue())
+                : AvFoundationDevices.bestPixelFormat(settings.getFfmpegPath(),
+                        inputVideoSource.getValue(),
+                        AvFoundationDevices.CaptureMode.parse(inputVideoInputMode.getValue()));
+    }
+
+    private List<AvFoundationDevices.CaptureMode> supportedVideoModes() {
+        if (Host.isLinux()) {
+            return V4l2Devices.supportedModes(settings.getFfmpegPath(), inputVideoSource.getValue(),
+                    parseIntOrDefault(inputFramePerSecond.getValue(), 30));
+        }
+        return AvFoundationDevices.supportedModes(settings.getFfmpegPath(), inputVideoSource.getValue());
     }
 
     private String defaultVideoInputMode(List<String> modes) {
@@ -542,6 +585,9 @@ public class StreamingGUI extends Application {
      * samples travel down ffmpeg's standard input and there is only one of those.
      */
     private boolean checkAudioSampleRates() {
+        if (Host.isLinux()) {
+            return checkLinuxAudioSources();
+        }
         if (!Host.isMac()) {
             return true;  // ffmpeg opens the devices itself through DirectShow
         }
@@ -570,12 +616,58 @@ public class StreamingGUI extends Application {
         return result;
     }
 
-    /** The stream start time in milliseconds, or {@link Integer#MIN_VALUE} if it is not a number. */
-    private static int parseStartMillis(String startTime) {
+    /**
+     * Checks the audio devices are still there before ffmpeg is asked to open them, which it
+     * would only refuse later and more cryptically. The meters can only follow the system
+     * default input, the one device the sound server's compatibility layer gives Java Sound,
+     * so a device that is not the default gets a hint rather than a refusal.
+     */
+    private boolean checkLinuxAudioSources() {
+        boolean result = true;
+        Set<String> devices = new LinkedHashSet<>();
+        for (ComboBox<String> audioInput : inputAudioSources) {
+            String deviceName = audioInput.getValue();
+            if (deviceName != null && !SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName) && !deviceName.isBlank()) {
+                devices.add(deviceName);
+            }
+        }
+        int multiChannelDevices = 0;
+        for (String deviceName : devices) {
+            if (!PulseAudioDevices.exists(settings.getFfmpegPath(), deviceName)) {
+                appendToConsole("The audio device \"" + deviceName + "\" is not connected any more.",
+                        "", Color.RED);
+                result = false;
+                continue;
+            }
+            if (!PulseAudioDevices.isDefaultSource(settings.getFfmpegPath(), deviceName)) {
+                appendToConsole("The level meters for \"" + deviceName + "\" will stay dark because it is not"
+                        + " the system default input. The stream itself carries it fine. To light the meters,"
+                        + " make it the default input in the system sound settings.", "", Color.ORANGE);
+            }
+            if (PulseAudioDevices.channelCount(settings.getFfmpegPath(), deviceName) > 8) {
+                multiChannelDevices++;
+            }
+        }
+        // A device beyond eight channels is read natively and fed to ffmpeg over its one and
+        // only standard input: see StreamRecorderRunnable
+        if (multiChannelDevices > 1) {
+            appendToConsole("Only one device with more than 8 channels can be used on this machine, but "
+                    + multiChannelDevices + " are selected. A mixer presents all of its inputs as one device,"
+                    + " so choose the same one for every language and give each language its own channel.",
+                    "", Color.RED);
+            result = false;
+        }
+        return result;
+    }
+
+    /** The stream start time in milliseconds, or {@link Long#MIN_VALUE} if it is not a number. */
+    private static long parseStartMillis(String startTime) {
         try {
-            return (int) (Double.parseDouble(startTime.trim()) * 1000);
+            // A long, not an int: on Linux the inputs are stamped with the time of day, and
+            // those milliseconds have not fitted in an int since 1970
+            return (long) (Double.parseDouble(startTime.trim()) * 1000);
         } catch (NumberFormatException e) {
-            return Integer.MIN_VALUE;
+            return Long.MIN_VALUE;
         }
     }
 
@@ -1020,8 +1112,9 @@ public class StreamingGUI extends Application {
         HBox videoInputLabelHBox = new HBox(1,videoInputLabel, videoInputinfoLabel);
         videoInputLabelHBox.setAlignment(Pos.CENTER_LEFT);
         inputGrid.add(videoInputLabelHBox, 0, row);
-        if (Host.isMac()) {
-            // AVFoundation only opens a mode the camera advertised, so it has to be chosen here
+        if (Host.isMac() || Host.isLinux()) {
+            // AVFoundation only opens a mode the camera advertised, so it has to be chosen here;
+            // v4l2 has modes too and the same virtual-camera behaviour, so it gets the same combo
             inputVideoSource.setPrefWidth(320);
             inputVideoInputMode.setPrefWidth(125);
             Tooltip modeTooltip = new Tooltip("The capture mode of the video device (size and frames per second).\n" +
@@ -1731,9 +1824,16 @@ public class StreamingGUI extends Application {
         if(!checkAudioSampleRates()) {
             result = false;
         }
-        if(Host.isMac() && (inputVideoInputMode.getValue()==null || inputVideoInputMode.getValue().isEmpty())) {
-            appendToConsole("The video device did not report any capture mode. If it is a virtual camera, start the application that provides it first.","",Color.RED);
+        if((Host.isMac() || Host.isLinux()) && (inputVideoInputMode.getValue()==null || inputVideoInputMode.getValue().isEmpty())) {
+            appendToConsole("The video device did not report any capture mode. If it is the OBS Virtual Camera, click Start Virtual Camera in OBS first, then choose the device again.","",Color.RED);
             result = false;
+        }
+        if(Host.isLinux()) {
+            String videoDevicePath = V4l2Devices.devicePath(inputVideoSource.getValue());
+            if (videoDevicePath == null || !new File(videoDevicePath).exists()) {
+                appendToConsole("The video device \"" + inputVideoSource.getValue() + "\" is not connected any more.","",Color.RED);
+                result = false;
+            }
         }
         if(inputVideoPid.getText().isEmpty()) {
             appendToConsole("Please Fill the Video PID Field (see Tooltip for help)","",Color.RED);
@@ -1852,8 +1952,8 @@ public class StreamingGUI extends Application {
             int endIndex = text.toString().indexOf(",", startIndex);
             if (startIndex != -1 && endIndex != -1) {
                 String startTime = text.toString().substring(startIndex+ "start: ".length(), endIndex);
-                int startMillis = parseStartMillis(startTime);
-                if (startMillis != Integer.MIN_VALUE) {
+                long startMillis = parseStartMillis(startTime);
+                if (startMillis != Long.MIN_VALUE) {
                     if (firstOpeningDeviceStartupTime == 0) {
                         firstOpeningDeviceStartupTime = startMillis;
                     }
@@ -1864,7 +1964,7 @@ public class StreamingGUI extends Application {
                         firstOpeningDeviceStartupTime = secondOpeningDeviceStartupTime;
                         secondOpeningDeviceStartupTime = startMillis;
                     }
-                    int timeToOpen = secondOpeningDeviceStartupTime-firstOpeningDeviceStartupTime;
+                    long timeToOpen = secondOpeningDeviceStartupTime-firstOpeningDeviceStartupTime;
                     // DirectShow counts from the start of the capture, AVFoundation from when the
                     // device itself was powered up, so only a plausible gap says anything useful
                     if (timeToOpen > 0 && timeToOpen <= MAX_PLAUSIBLE_DEVICE_OPEN_MS) {

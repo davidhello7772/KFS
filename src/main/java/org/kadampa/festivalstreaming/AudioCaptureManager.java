@@ -20,6 +20,12 @@ public class AudioCaptureManager {
     /** The rate to ask devices for, from the settings. It is also the rate recordings are made at. */
     private static volatile int preferredSampleRate = 48000;
 
+    /** On Linux, the channel count the picked device really has: see {@link #findCaptureDevice}. */
+    private static volatile int preferredChannels = 0;
+
+    /** The configured ffmpeg path, needed on Linux where the device list comes from ffmpeg. */
+    private static volatile String ffmpegPath;
+
     private AudioCaptureManager() {}
 
     /**
@@ -30,6 +36,11 @@ public class AudioCaptureManager {
         if (sampleRate > 0) {
             preferredSampleRate = sampleRate;
         }
+    }
+
+    /** Where ffmpeg lives, from the settings, for the platforms whose device list ffmpeg provides. */
+    public static void setFfmpegPath(String configuredPath) {
+        ffmpegPath = configuredPath;
     }
 
     /**
@@ -46,22 +57,50 @@ public class AudioCaptureManager {
      * <p>
      * A device usually appears twice, once as a port and once as the line that can actually be
      * recorded from, so the one with a capture line is the one wanted.
+     * <p>
+     * On Linux the name is a sound-server description, and the only device Java Sound may open
+     * is the server's own "default" — never a {@code plughw:} mixer of the device itself. Held
+     * directly, the hardware does not refuse the server's concurrent capture of the same device:
+     * it silently starves it, which would freeze the whole stream with no error anywhere. So a
+     * device that is the system default input gets working meters through the server's default,
+     * and any other device gets no meters, while the stream itself always works.
      */
     public static Mixer.Info findCaptureDevice(String deviceName) {
         if (deviceName == null || deviceName.isBlank() || SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName)) {
             return null;
         }
-        for (Mixer.Info info : AudioSystem.getMixerInfo()) {
-            if (!deviceName.equals(info.getName())) {
-                continue;
+        if (Host.isLinux()) {
+            if (!PulseAudioDevices.isDefaultSource(ffmpegPath, deviceName)) {
+                return null;
             }
-            for (Line.Info lineInfo : AudioSystem.getMixer(info).getTargetLineInfo()) {
-                if (TargetDataLine.class.isAssignableFrom(lineInfo.getLineClass())) {
+            // The compatibility device reports the channel ranges the server could convert to,
+            // not what the hardware has, so the meters are told the real count separately
+            preferredChannels = PulseAudioDevices.channelCount(ffmpegPath, deviceName);
+            for (Mixer.Info info : AudioSystem.getMixerInfo()) {
+                // The server's device carries "[default]"; the part before it is unpredictable
+                // (PipeWire names it after the client, e.g. "alsa_playback.java [default]")
+                if (info.getName().contains("[default]")
+                        && hasCaptureLine(info)) {
                     return info;
                 }
             }
+            return null;
+        }
+        for (Mixer.Info info : AudioSystem.getMixerInfo()) {
+            if (deviceName.equals(info.getName()) && hasCaptureLine(info)) {
+                return info;
+            }
         }
         return null;
+    }
+
+    private static boolean hasCaptureLine(Mixer.Info info) {
+        for (Line.Info lineInfo : AudioSystem.getMixer(info).getTargetLineInfo()) {
+            if (TargetDataLine.class.isAssignableFrom(lineInfo.getLineClass())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -71,6 +110,9 @@ public class AudioCaptureManager {
      * @param channel   The audio channel to monitor ("Left", "Right", or "Stereo").
      */
     public void startMonitoring(Mixer.Info mixerInfo, String channel) {
+        if (mixerInfo == null) {
+            return;  // a meter whose device Java Sound cannot open: see findCaptureDevice
+        }
         DeviceCapture capture = deviceCaptures.get(mixerInfo);
         if (capture != null) {
             capture.startMonitoring(channel);
@@ -83,6 +125,9 @@ public class AudioCaptureManager {
      * @param mixerInfo The mixer info for the device to stop monitoring.
      */
     public void stopMonitoring(Mixer.Info mixerInfo) {
+        if (mixerInfo == null) {
+            return;
+        }
         DeviceCapture capture = deviceCaptures.get(mixerInfo);
         if (capture != null) {
             capture.stopMonitoring();
@@ -192,7 +237,10 @@ public class AudioCaptureManager {
          */
         private List<AudioFormat> findCaptureFormats() {
             List<AudioFormat> candidates = new ArrayList<>();
-            int deviceChannels = maxDeviceChannels();
+            // On Linux the real channel count comes from the sound server, because the numbers
+            // its compatibility device shows Java Sound are conversion ranges, not hardware
+            int deviceChannels = Host.isLinux() && preferredChannels > 0
+                    ? preferredChannels : maxDeviceChannels();
             int preferred = preferredSampleRate;
             if (deviceChannels > 2) {
                 // CoreAudio converts from whatever the device runs at, so the configured rate
