@@ -618,9 +618,7 @@ public class StreamingGUI extends Application {
 
     /**
      * Checks the audio devices are still there before ffmpeg is asked to open them, which it
-     * would only refuse later and more cryptically. The meters can only follow the system
-     * default input, the one device the sound server's compatibility layer gives Java Sound,
-     * so a device that is not the default gets a hint rather than a refusal.
+     * would only refuse later and more cryptically.
      */
     private boolean checkLinuxAudioSources() {
         boolean result = true;
@@ -638,11 +636,6 @@ public class StreamingGUI extends Application {
                         "", Color.RED);
                 result = false;
                 continue;
-            }
-            if (!PulseAudioDevices.isDefaultSource(settings.getFfmpegPath(), deviceName)) {
-                appendToConsole("The level meters for \"" + deviceName + "\" will stay dark because it is not"
-                        + " the system default input. The stream itself carries it fine. To light the meters,"
-                        + " make it the default input in the system sound settings.", "", Color.ORANGE);
             }
             if (PulseAudioDevices.channelCount(settings.getFfmpegPath(), deviceName) > 8) {
                 multiChannelDevices++;
@@ -795,8 +788,18 @@ public class StreamingGUI extends Application {
         inputSrtResolution.setValue(settings.getSrtDef());
         inputOutputFileResolution.setValue(settings.getFileDef());
         // The saved encoder may belong to the other machine, NVENC needing a card no Mac has
-        if (inputEncoder.getItems().contains(settings.getEncoder())) {
-            inputEncoder.setValue(settings.getEncoder());
+        String savedEncoder = settings.getEncoder();
+        // A file from before the preset choice says a bare "libx264": its first preset entry
+        if (!inputEncoder.getItems().contains(savedEncoder)) {
+            for (String option : inputEncoder.getItems()) {
+                if (Host.encoderCodec(option).equals(savedEncoder)) {
+                    savedEncoder = option;
+                    break;
+                }
+            }
+        }
+        if (inputEncoder.getItems().contains(savedEncoder)) {
+            inputEncoder.setValue(savedEncoder);
         } else if (!inputEncoder.getItems().isEmpty()) {
             inputEncoder.setValue(inputEncoder.getItems().get(0));
             if (!settings.getEncoder().isEmpty()) {

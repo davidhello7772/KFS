@@ -20,11 +20,11 @@ public class AudioCaptureManager {
     /** The rate to ask devices for, from the settings. It is also the rate recordings are made at. */
     private static volatile int preferredSampleRate = 48000;
 
-    /** On Linux, the channel count the picked device really has: see {@link #findCaptureDevice}. */
-    private static volatile int preferredChannels = 0;
-
     /** The configured ffmpeg path, needed on Linux where the device list comes from ffmpeg. */
     private static volatile String ffmpegPath;
+
+    /** One synthetic device handle per Linux source, so every meter of a device shares a capture. */
+    private static final Map<String, Mixer.Info> linuxDeviceInfos = new ConcurrentHashMap<>();
 
     private AudioCaptureManager() {}
 
@@ -58,33 +58,23 @@ public class AudioCaptureManager {
      * A device usually appears twice, once as a port and once as the line that can actually be
      * recorded from, so the one with a capture line is the one wanted.
      * <p>
-     * On Linux the name is a sound-server description, and the only device Java Sound may open
-     * is the server's own "default" — never a {@code plughw:} mixer of the device itself. Held
-     * directly, the hardware does not refuse the server's concurrent capture of the same device:
-     * it silently starves it, which would freeze the whole stream with no error anywhere. So a
-     * device that is the system default input gets working meters through the server's default,
-     * and any other device gets no meters, while the stream itself always works.
+     * On Linux the name is a sound-server description and the handle returned is synthetic:
+     * the capture is not a Java Sound line but pw-record, the server's own reader (see
+     * {@link DeviceCapture#openLinuxCapture()}). Java Sound is not usable here: its direct ALSA
+     * devices silently starve any concurrent server capture of the same device, and the
+     * server's compatibility devices scramble channel maps above eight channels. pw-record
+     * shares the device with ffmpeg and keeps every channel in hardware order.
      */
     public static Mixer.Info findCaptureDevice(String deviceName) {
         if (deviceName == null || deviceName.isBlank() || SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName)) {
             return null;
         }
         if (Host.isLinux()) {
-            if (!PulseAudioDevices.isDefaultSource(ffmpegPath, deviceName)) {
+            if (!PulseAudioDevices.exists(ffmpegPath, deviceName)) {
                 return null;
             }
-            // The compatibility device reports the channel ranges the server could convert to,
-            // not what the hardware has, so the meters are told the real count separately
-            preferredChannels = PulseAudioDevices.channelCount(ffmpegPath, deviceName);
-            for (Mixer.Info info : AudioSystem.getMixerInfo()) {
-                // The server's device carries "[default]"; the part before it is unpredictable
-                // (PipeWire names it after the client, e.g. "alsa_playback.java [default]")
-                if (info.getName().contains("[default]")
-                        && hasCaptureLine(info)) {
-                    return info;
-                }
-            }
-            return null;
+            return linuxDeviceInfos.computeIfAbsent(deviceName,
+                    name -> new Mixer.Info(name, "PipeWire", "pw-record capture", "") {});
         }
         for (Mixer.Info info : AudioSystem.getMixerInfo()) {
             if (deviceName.equals(info.getName()) && hasCaptureLine(info)) {
@@ -165,6 +155,9 @@ public class AudioCaptureManager {
         private final List<AudioDataListener> listeners = new CopyOnWriteArrayList<>();
         private Thread captureThread;
         private TargetDataLine inputLine;
+        /** On Linux the samples come from pw-record instead of a Java Sound line. */
+        private Process linuxRecorder;
+        private java.io.InputStream linuxStream;
         private SourceDataLine outputLine;
         private volatile boolean running = false;
         private volatile boolean monitoring = false;
@@ -237,10 +230,7 @@ public class AudioCaptureManager {
          */
         private List<AudioFormat> findCaptureFormats() {
             List<AudioFormat> candidates = new ArrayList<>();
-            // On Linux the real channel count comes from the sound server, because the numbers
-            // its compatibility device shows Java Sound are conversion ranges, not hardware
-            int deviceChannels = Host.isLinux() && preferredChannels > 0
-                    ? preferredChannels : maxDeviceChannels();
+            int deviceChannels = maxDeviceChannels();
             int preferred = preferredSampleRate;
             if (deviceChannels > 2) {
                 // CoreAudio converts from whatever the device runs at, so the configured rate
@@ -393,11 +383,17 @@ public class AudioCaptureManager {
             running = true;
             captureThread = new Thread(() -> {
                 try {
-                    openInputLine();
-                    inputLine.start();
+                    int lineBufferSize;
+                    if (Host.isLinux()) {
+                        lineBufferSize = openLinuxCapture();
+                    } else {
+                        openInputLine();
+                        inputLine.start();
+                        lineBufferSize = inputLine.getBufferSize();
+                    }
                     playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
 
-                    byte[] inputBuffer = new byte[inputLine.getBufferSize()];
+                    byte[] inputBuffer = new byte[lineBufferSize];
                     int outputBufferSize = (inputBuffer.length / captureFormat.getFrameSize()) * playbackFormat.getFrameSize();
                     byte[] outputBuffer = new byte[outputBufferSize];
 
@@ -412,7 +408,13 @@ public class AudioCaptureManager {
                     System.out.println("Started capture: " + captureFormat + ", buffer: " + inputBuffer.length + " bytes");
 
                     while (running) {
-                        int bytesRead = inputLine.read(inputBuffer, 0, chunkSize);
+                        int bytesRead = readChunk(inputBuffer, chunkSize);
+                        if (bytesRead < 0) {
+                            if (running) {
+                                throw new java.io.IOException("The audio capture ended unexpectedly");
+                            }
+                            break;
+                        }
                         if (bytesRead > 0) {
                             for (AudioDataListener listener : listeners) {
                                 listener.onAudioData(inputBuffer, bytesRead, captureFormat);
@@ -438,6 +440,46 @@ public class AudioCaptureManager {
             captureThread.setDaemon(true);
             captureThread.setName("AudioCapture-" + mixerInfo.getName());
             captureThread.start();
+        }
+
+        /**
+         * One chunk of samples: a full one so frames stay aligned, or -1 when the source is
+         * gone. A stopped Java Sound line answers 0, which the loop just skips over.
+         */
+        private int readChunk(byte[] buffer, int chunkSize) throws java.io.IOException {
+            if (linuxStream != null) {
+                int bytesRead = linuxStream.readNBytes(buffer, 0, chunkSize);
+                return bytesRead == chunkSize ? bytesRead : -1;  // short answer = pw-record ended
+            }
+            return inputLine.read(buffer, 0, chunkSize);
+        }
+
+        /**
+         * Starts pw-record on this device and captures its output. The server resamples to the
+         * configured rate and delivers the device's channels in hardware order, which neither of
+         * Java Sound's routes into the server manages beyond eight channels.
+         *
+         * @return the size to give the read buffer, sized like the Java Sound line (150ms)
+         */
+        private int openLinuxCapture() throws java.io.IOException {
+            String deviceName = mixerInfo.getName();
+            int channels = PulseAudioDevices.channelCount(ffmpegPath, deviceName);
+            if (channels <= 0) {
+                channels = 2;
+            }
+            String nodeName = PulseAudioDevices.resolveName(ffmpegPath, deviceName);
+            captureFormat = new AudioFormat(preferredSampleRate, 16, channels, true, false);
+            linuxRecorder = new ProcessBuilder("pw-record",
+                    "--target", nodeName != null ? nodeName : deviceName,
+                    "--rate", String.valueOf(preferredSampleRate),
+                    "--channels", String.valueOf(channels),
+                    "--format", "s16",
+                    "-")
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
+            linuxStream = linuxRecorder.getInputStream();
+            int bufferSize = (int) (captureFormat.getSampleRate() * captureFormat.getFrameSize() * 0.15f);
+            return bufferSize - bufferSize % captureFormat.getFrameSize();
         }
 
         /**
@@ -477,6 +519,11 @@ public class AudioCaptureManager {
          */
         private void cleanup() {
             System.out.println("Cleaning capture for " + mixerInfo.getName() + " - input:" + inputLine + " - output:" + outputLine);
+            if (linuxRecorder != null) {
+                linuxRecorder.destroy();
+                linuxRecorder = null;
+                linuxStream = null;
+            }
             if (inputLine != null) {
                 inputLine.stop();
                 inputLine.close();

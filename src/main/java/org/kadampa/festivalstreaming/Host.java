@@ -39,13 +39,19 @@ public final class Host {
     private static final int QUERY_TIMEOUT_SECONDS = 4;
 
     /**
-     * The H.264 encoders offered in the settings, best first, per platform.
+     * The H.264 encoders offered in the settings, best first, per platform. An x264 entry may
+     * carry a preset after a space: at a fixed bitrate a slower preset trades processor time
+     * directly for picture quality. The ladder stops at slow, which still encoded twice real
+     * time at 720p on the streaming laptop; on Windows the entries stay bare because that
+     * machine's command is deliberately left untouched and a preset would silently not apply.
      * <p>
      * x264 leads on the Mac: measured on real festival footage at 2500kbps it encodes about
      * 1.2dB better than VideoToolbox, which on this hardware needs roughly half as much bitrate
      * again to match it. VideoToolbox stays available for a machine short of processor time.
      */
-    private static final List<String> MAC_VIDEO_ENCODERS = List.of("libx264", "h264_videotoolbox");
+    private static final List<String> X264_PRESET_OPTIONS = List.of(
+            "libx264 veryfast", "libx264 faster", "libx264 fast", "libx264 medium", "libx264 slow");
+    private static final List<String> MAC_VIDEO_ENCODERS = concat(X264_PRESET_OPTIONS, "h264_videotoolbox");
     private static final List<String> WINDOWS_VIDEO_ENCODERS = List.of("libx264", "h264_nvenc");
     /**
      * QSV takes ordinary frames and uploads them itself, so it works with the existing filter
@@ -53,7 +59,33 @@ public final class Host {
      * fails at start when the hardware or drivers are missing. VAAPI is deliberately not offered:
      * it only accepts frames already on the GPU, which the filter graph does not produce.
      */
-    private static final List<String> LINUX_VIDEO_ENCODERS = List.of("libx264", "h264_qsv", "h264_nvenc");
+    private static final List<String> LINUX_VIDEO_ENCODERS = concat(X264_PRESET_OPTIONS, "h264_qsv", "h264_nvenc");
+
+    private static List<String> concat(List<String> head, String... tail) {
+        List<String> all = new ArrayList<>(head);
+        all.addAll(List.of(tail));
+        return List.copyOf(all);
+    }
+
+    /** The codec inside an encoder option: {@code "libx264 fast"} names libx264. */
+    public static String encoderCodec(String option) {
+        if (option == null) {
+            return null;
+        }
+        String trimmed = option.trim();
+        int space = trimmed.indexOf(' ');
+        return space < 0 ? trimmed : trimmed.substring(0, space);
+    }
+
+    /** The preset inside an encoder option, or null when it carries none. */
+    public static String encoderPreset(String option) {
+        if (option == null) {
+            return null;
+        }
+        String trimmed = option.trim();
+        int space = trimmed.indexOf(' ');
+        return space < 0 ? null : trimmed.substring(space + 1).trim();
+    }
 
     /** ffmpeg is expected on the PATH, but a GUI launch on macOS does not inherit the shell PATH. */
     private static final List<String> MAC_FFMPEG_FALLBACKS = List.of(
@@ -61,9 +93,13 @@ public final class Host {
             "/usr/local/bin/ffmpeg",     // Intel Homebrew
             "/opt/local/bin/ffmpeg");    // MacPorts
 
-    /** The same for a Linux desktop launch, whose PATH is not the shell's either. */
+    /**
+     * The same for a Linux desktop launch, whose PATH is not the shell's either. Newest-first:
+     * a hand-installed build outranks the distribution package, which the bare PATH fallback
+     * finds on its own and which would otherwise shadow it.
+     */
     private static final List<String> LINUX_FFMPEG_FALLBACKS = List.of(
-            "/usr/bin/ffmpeg",           // distribution package
+            System.getProperty("user.home", "") + "/.local/bin/ffmpeg",  // hand-installed build
             "/usr/local/bin/ffmpeg",     // built from source
             "/snap/bin/ffmpeg");         // snap package
 
@@ -157,7 +193,8 @@ public final class Host {
         if (available.isEmpty()) {
             return preferred;  // ffmpeg could not be queried; offer the list and let it fail loudly
         }
-        List<String> result = new ArrayList<>(preferred.stream().filter(available::contains).toList());
+        List<String> result = new ArrayList<>(preferred.stream()
+                .filter(option -> available.contains(encoderCodec(option))).toList());
         return result.isEmpty() ? preferred : result;
     }
 

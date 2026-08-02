@@ -321,7 +321,7 @@ public class StreamRecorderRunnable implements Runnable {
         parameterCommand.add("-s");
         parameterCommand.add(outputResolution);
         parameterCommand.add("-c:v");
-        parameterCommand.add(encoder);
+        parameterCommand.add(Host.encoderCodec(encoder));
         parameterCommand.add("-b:v");
         parameterCommand.add(videoBitrate);
         parameterCommand.add("-minrate:v");
@@ -412,15 +412,17 @@ public class StreamRecorderRunnable implements Runnable {
         parameterCommand.add(videoBitrate);
         parameterCommand.add("-g");
         parameterCommand.add(String.valueOf(Math.max(1, fps * KEYFRAME_INTERVAL_SECONDS)));
-        if (X264_ENCODER.equals(encoder)) {
+        if (X264_ENCODER.equals(Host.encoderCodec(encoder))) {
             /*
              * x264's own default preset leaves too little margin to encode live: on a six core
              * machine it managed only 1.8 times real time on demanding material, before the audio
-             * filters take their share. This one keeps three times real time and still encodes
-             * better than the hardware encoder does at the same bitrate.
+             * filters take their share. veryfast keeps three times real time and still encodes
+             * better than the hardware encoder does at the same bitrate; the settings offer the
+             * slower ones for a machine with processor time to spend on picture quality.
              */
+            String preset = Host.encoderPreset(encoder);
             parameterCommand.add("-preset");
-            parameterCommand.add(X264_PRESET);
+            parameterCommand.add(preset != null ? preset : X264_PRESET);
             // Holds the transmitted rate steady, which is what the ingest actually measures
             parameterCommand.add("-x264-params");
             parameterCommand.add("nal-hrd=cbr");
@@ -520,6 +522,10 @@ public class StreamRecorderRunnable implements Runnable {
                 devicesListCommand.add("s16le");
                 devicesListCommand.add("-thread_queue_size");
                 devicesListCommand.add("1024");
+                // The samples are stamped by counting, which is the only clean clock a pipe
+                // has. Stamping them on arrival instead was tried for drift correction and
+                // withdrawn: under encoding load the arrival times jitter by whole buffers,
+                // and a resampler chasing that jitter shreds the audio audibly.
                 devicesListCommand.add("-ar");
                 devicesListCommand.add(audioSampleRate);
                 devicesListCommand.add("-ac");

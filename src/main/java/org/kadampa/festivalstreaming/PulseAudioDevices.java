@@ -98,15 +98,6 @@ public final class PulseAudioDevices {
         return find(ffmpegPath, description) != null;
     }
 
-    /**
-     * Whether the description is the system default input, the one device the ALSA compatibility
-     * layer exposes to Java Sound and therefore the one whose level meters can work.
-     */
-    public static boolean isDefaultSource(String ffmpegPath, String description) {
-        Source source = find(ffmpegPath, description);
-        return source != null && source.isDefault();
-    }
-
     /** The device's real channel count, or 0 when pw-dump could not say. */
     public static int channelCount(String ffmpegPath, String description) {
         Source source = find(ffmpegPath, description);
