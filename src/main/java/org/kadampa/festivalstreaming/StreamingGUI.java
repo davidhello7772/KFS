@@ -113,6 +113,8 @@ public class StreamingGUI extends Application {
     private final DropShadow liveDotGlow = new DropShadow();
     private final HBox nowPlayingBox = new HBox(nowPlayingLabel);
     private final BooleanProperty isTheOutputAFile = new SimpleBooleanProperty();
+    /** True while a device re-scan runs, so the refresh button cannot be pressed twice. */
+    private final BooleanProperty devicesRefreshing = new SimpleBooleanProperty(false);
     private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputFileAndUrl = new SimpleBooleanProperty();
     private LevelMeterPanel vuMeterPanel;
@@ -428,18 +430,72 @@ public class StreamingGUI extends Application {
      * names it will accept back as an input.
      */
     private void populateVideoSources() {
+        inputVideoSource.getItems().addAll(videoDeviceNames());
+    }
+
+    private List<String> videoDeviceNames() {
         if (Host.isMac()) {
-            inputVideoSource.getItems().addAll(AvFoundationDevices.videoDeviceNames(settings.getFfmpegPath()));
-            return;
+            return AvFoundationDevices.videoDeviceNames(settings.getFfmpegPath());
         }
         if (Host.isLinux()) {
-            inputVideoSource.getItems().addAll(V4l2Devices.videoDeviceNames(settings.getFfmpegPath()));
-            return;
+            return V4l2Devices.videoDeviceNames(settings.getFfmpegPath());
         }
-        List<Webcam> webcams = Webcam.getWebcams();
-        for (Webcam webcam : webcams) {
-            this.inputVideoSource.getItems().add(webcam.getDevice().getName().substring(0, webcam.getDevice().getName().length() - 2));
+        List<String> names = new ArrayList<>();
+        for (Webcam webcam : Webcam.getWebcams()) {
+            String name = webcam.getDevice().getName();
+            names.add(name.substring(0, name.length() - 2));
         }
+        return names;
+    }
+
+    /**
+     * Re-reads the device lists without restarting the program: the sound card or the
+     * capture card is often plugged in only after launch. The enumeration shells out to
+     * ffmpeg with multi-second deadlines, so it runs off the FX thread; the selections
+     * survive untouched — a device still missing stays selected the way a saved setting
+     * does, and a newly plugged one simply appears in its list.
+     */
+    private void refreshDevices() {
+        devicesRefreshing.set(true);
+        // The scan probes the video devices, and ffmpeg must not race it for them: starting
+        // is held back for the scan's couple of seconds, then restored to whatever the
+        // stream's own state says it should be
+        startButton.setDisable(true);
+        // Snapshot the selections on the FX thread; the scan must not read live controls
+        String[] selectedAudio = new String[inputAudioSources.length];
+        for (int i = 0; i < inputAudioSources.length; i++) {
+            selectedAudio[i] = inputAudioSources[i].getValue();
+        }
+        Thread scan = new Thread(() -> {
+            List<String> audioNames = audioDeviceNames();
+            List<String> videoNames = videoDeviceNames();
+            // The channel lists follow the selected devices, whose channel counts can be
+            // asked now that the hardware may finally be there
+            int[] channelCounts = new int[selectedAudio.length];
+            for (int i = 0; i < selectedAudio.length; i++) {
+                channelCounts[i] = channelCountOf(selectedAudio[i]);
+            }
+            Platform.runLater(() -> {
+                for (int i = 0; i < inputAudioSources.length; i++) {
+                    ComboBox<String> audioInput = inputAudioSources[i];
+                    String selected = audioInput.getValue();
+                    audioInput.getItems().setAll(SettingsUtil.AUDIO_SOURCE_NOT_USED);
+                    audioInput.getItems().addAll(audioNames);
+                    audioInput.setValue(selected);
+                    populateChannels(i, channelCounts[i]);
+                }
+                String selectedVideo = inputVideoSource.getValue();
+                inputVideoSource.getItems().setAll(videoNames);
+                inputVideoSource.setValue(selectedVideo);
+                // Restoring the same value fires no change event, so the modes - which a
+                // freshly started virtual camera only now reports - are refreshed by hand
+                populateVideoInputModes();
+                startButton.setDisable(streamRecorder.isAliveProperty().get());
+                devicesRefreshing.set(false);
+            });
+        }, "device-refresh");
+        scan.setDaemon(true);
+        scan.start();
     }
 
     /**
@@ -450,9 +506,17 @@ public class StreamingGUI extends Application {
      * own numbered channel.
      */
     private void populateChannels(int languageIndex, String deviceName) {
+        populateChannels(languageIndex, channelCountOf(deviceName));
+    }
+
+    /**
+     * The half of {@link #populateChannels(int, String)} that only touches the interface:
+     * the channel count arrives precomputed, so a device re-scan can query it off the FX
+     * thread and apply the answer here.
+     */
+    private void populateChannels(int languageIndex, int channelCount) {
         ComboBox<String> channelInput = inputAudioSourcesChannel[languageIndex];
         String previous = channelInput.getValue();
-        int channelCount = channelCountOf(deviceName);
         List<String> channels = new ArrayList<>();
         if (channelCount > 2) {
             for (int channel = 1; channel <= channelCount; channel++) {
@@ -1142,6 +1206,18 @@ public class StreamingGUI extends Application {
         HBox videoInputLabelHBox = new HBox(1,videoInputLabel, videoInputinfoLabel);
         videoInputLabelHBox.setAlignment(Pos.CENTER_LEFT);
         inputGrid.add(videoInputLabelHBox, 0, row);
+        // A quiet way to pick up a sound card or capture card plugged in after launch,
+        // without restarting; locked while a stream runs, like the Start button is
+        Button refreshDevicesButton = new Button("↻");
+        Tooltip refreshTooltip = new Tooltip("Re-scan the audio and video devices.\n"
+                + "Use it when a device was plugged in after the program started.");
+        refreshTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+        refreshTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+        refreshTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        refreshTooltip.getStyleClass().add("tooltip");
+        refreshDevicesButton.setTooltip(refreshTooltip);
+        refreshDevicesButton.disableProperty().bind(startButton.disabledProperty().or(devicesRefreshing));
+        refreshDevicesButton.setOnAction(e -> refreshDevices());
         if (Host.isMac() || Host.isLinux()) {
             // AVFoundation only opens a mode the camera advertised, so it has to be chosen here;
             // v4l2 has modes too and the same virtual-camera behaviour, so it gets the same combo
@@ -1155,9 +1231,9 @@ public class StreamingGUI extends Application {
             modeTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
             modeTooltip.getStyleClass().add("tooltip");
             inputVideoInputMode.setTooltip(modeTooltip);
-            inputGrid.add(new HBox(5, inputVideoSource, inputVideoInputMode), 1, row);
+            inputGrid.add(new HBox(5, inputVideoSource, inputVideoInputMode, refreshDevicesButton), 1, row);
         } else {
-            inputGrid.add(inputVideoSource, 1, row);
+            inputGrid.add(new HBox(5, inputVideoSource, refreshDevicesButton), 1, row);
             inputVideoSource.setPrefWidth(450);
         }
         HBox noisePresetBox = buildNoiseReductionPresets();
