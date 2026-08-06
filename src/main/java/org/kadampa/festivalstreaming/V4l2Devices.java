@@ -25,6 +25,16 @@ import org.kadampa.festivalstreaming.AvFoundationDevices.CaptureMode;
  * OBS Virtual Camera is such a device too (a v4l2loopback node), with the same behaviour as its
  * macOS counterpart: while OBS is not emitting, the node lists no formats, and the interface asks
  * the user to start the virtual camera first.
+ * <p>
+ * A note for future slideshow debugging: v4l2loopback 0.15.3 and earlier had an attach-time race
+ * that could hand one capture session a poisoned start — OBS pushed frames normally, yet the
+ * reader received one only every few seconds, for the whole life of that session. ffmpeg padded
+ * the gaps ({@code dup=} climbing in its status line) and the stream played as a slideshow while
+ * every diagnostic elsewhere looked healthy. Seen live on 2026-08-05, typically on the first
+ * capture after a reboot, and cured by upgrading the module to 0.15.4 (buffer-mapping ordering
+ * and locking fixes). If it ever returns: check {@code modinfo v4l2loopback}, and know that
+ * capturing and discarding a few frames right before the real capture absorbs a poisoned
+ * session — a warm-up doing exactly that was used here while the fix was verified, then removed.
  */
 public final class V4l2Devices {
 

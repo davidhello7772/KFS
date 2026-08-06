@@ -62,6 +62,8 @@ public class StreamRecorderRunnable implements Runnable {
     private static final int PULSE_CHANNEL_LIMIT = 8;
     private List<String> pwRecordCommand;
     private Process pwRecordProcess;
+    /** Joins pw-record to ffmpeg on Linux without losing the start-up audio: see AudioRelay. */
+    private AudioRelay audioRelay;
     // Built on the FX thread when the Information tab is filled, consumed by the encoding thread
     private volatile List<String> preparedCommand;
     private Process process = null;
@@ -80,12 +82,17 @@ public class StreamRecorderRunnable implements Runnable {
         List<String> command = takeCommand();
         try {
             if (pwRecordCommand != null) {
-                // pw-record's output becomes ffmpeg's standard input
+                // The recorder and ffmpeg are started separately and joined by an AudioRelay
+                // instead of a plain pipe, so the audio recorded during ffmpeg's start-up
+                // survives to be encoded and the delay setting only has to cover the real
+                // chain latency: see AudioRelay
                 ProcessBuilder recorder = new ProcessBuilder(pwRecordCommand)
                         .redirectError(ProcessBuilder.Redirect.DISCARD);
-                List<Process> pipeline = ProcessBuilder.startPipeline(List.of(recorder, new ProcessBuilder(command)));
-                pwRecordProcess = pipeline.get(0);
-                process = pipeline.get(1);
+                pwRecordProcess = recorder.start();
+                process = new ProcessBuilder(command).start();
+                audioRelay = new AudioRelay(pwRecordProcess.getInputStream(),
+                        process.getOutputStream(), pwRecordBytesPerSecond());
+                audioRelay.start();
             } else {
                 process = new ProcessBuilder(command).start();
             }
@@ -114,10 +121,21 @@ public class StreamRecorderRunnable implements Runnable {
     }
 
     private void stopPwRecord() {
+        if (audioRelay != null) {
+            audioRelay.stop();
+            audioRelay = null;
+        }
         if (pwRecordProcess != null) {
             pwRecordProcess.destroy();
             pwRecordProcess = null;
         }
+    }
+
+    /** The byte rate of pw-record's output, read back off its own command line. */
+    private int pwRecordBytesPerSecond() {
+        int rate = Integer.parseInt(pwRecordCommand.get(pwRecordCommand.indexOf("--rate") + 1));
+        int channels = Integer.parseInt(pwRecordCommand.get(pwRecordCommand.indexOf("--channels") + 1));
+        return rate * channels * 2;  // s16 samples
     }
 
     public Process getProcess() {
@@ -458,15 +476,17 @@ public class StreamRecorderRunnable implements Runnable {
             devicesListCommand.add("-i");
             devicesListCommand.add(videoDevice + ":");
         } else if (Host.isLinux()) {
+            // If the stream ever plays as a slideshow with ffmpeg's dup= counter climbing
+            // while OBS itself is healthy, see the v4l2loopback note on V4l2Devices
             // While ffmpeg is still opening the later inputs, frames from this one have to
             // queue; the default queue is far too short for that and drops them with a warning
             devicesListCommand.add("-thread_queue_size");
             devicesListCommand.add("1024");
-            // The camera stamps frames with the machine's uptime; the sound server stamps its
-            // audio with the time of day. Asking for wallclock stamps here puts the two inputs
-            // on the same clock, so the offsets ffmpeg reports between them mean something
-            devicesListCommand.add("-use_wallclock_as_timestamps");
-            devicesListCommand.add("1");
+            // The camera's own kernel timestamps are the right clock here. Wallclock stamps
+            // were tried for cross-input alignment and withdrawn: they are applied when a
+            // frame is read, not when it was captured, so the frames queued while ffmpeg
+            // spends its start-up seconds opening the audio pipe and the encoder all got
+            // stamped late - a fixed two-second video delay for the whole stream.
             AvFoundationDevices.CaptureMode mode = AvFoundationDevices.CaptureMode.parse(videoInputMode);
             devicesListCommand.add("-framerate");
             devicesListCommand.add(String.valueOf(mode != null ? mode.frameRate() : fps));
@@ -512,16 +532,35 @@ public class StreamRecorderRunnable implements Runnable {
             if (channels > PULSE_CHANNEL_LIMIT && pwRecordCommand == null) {
                 // The mixer: read natively and hand the samples to ffmpeg over its standard
                 // input. pw-record resamples to the configured rate like the server would.
-                pwRecordCommand = List.of("pw-record",
+                // --raw matters: writing to standard output pw-record otherwise prepends a
+                // 24-byte AU file header, which read as samples shifts every channel by 12
+                List<String> recordCommand = new ArrayList<>(List.of("pw-record", "--raw",
                         "--target", sourceName != null ? sourceName : audioDevice,
                         "--rate", audioSampleRate,
-                        "--channels", String.valueOf(channels),
-                        "--format", "s16",
-                        "-");
+                        "--channels", String.valueOf(channels)));
+                // The server routes stream channels to device channels by label, so without
+                // the device's own labels the mixer's channels arrive shifted: see channelMap
+                String channelMap = PulseAudioDevices.channelMap(ffmpegPath, audioDevice);
+                if (channelMap != null && channelMap.split(",").length == channels) {
+                    recordCommand.add("--channel-map");
+                    recordCommand.add(channelMap);
+                }
+                recordCommand.add("--format");
+                recordCommand.add("s16");
+                recordCommand.add("-");
+                pwRecordCommand = List.copyOf(recordCommand);
                 devicesListCommand.add("-f");
                 devicesListCommand.add("s16le");
                 devicesListCommand.add("-thread_queue_size");
                 devicesListCommand.add("1024");
+                // The samples are raw and their format is fully stated right here, so there
+                // is nothing to probe. Left to itself ffmpeg still probes its default five
+                // megabytes, and on an unseekable pipe that means waiting for that much
+                // real-time audio - it held every start-up for four to five seconds
+                devicesListCommand.add("-probesize");
+                devicesListCommand.add("32");
+                devicesListCommand.add("-analyzeduration");
+                devicesListCommand.add("0");
                 // The samples are stamped by counting, which is the only clean clock a pipe
                 // has. Stamping them on arrival instead was tried for drift correction and
                 // withdrawn: under encoding load the arrival times jitter by whole buffers,
@@ -633,7 +672,9 @@ public class StreamRecorderRunnable implements Runnable {
             process.destroyForcibly();
             outputLineProperty.setValue("Stopping parent process forcefully");
         }
-        monitor.stopMonitoring();
+        if (monitor != null) {
+            monitor.stopMonitoring();
+        }
     }
     public void setSrtUrl(String url) {
         this.srtUrl = url;
