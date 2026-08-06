@@ -40,6 +40,8 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
 
     private final Map<String, LevelMeter> vuMeters = new HashMap<>();
     private final Settings settings;
+    /** Kept for the device re-scan, which re-reads the selections without changing them. */
+    private final ComboBox<String>[] inputAudioSources;
 
     // One shared timer drives every meter at ~30fps (every other JavaFX pulse):
     // twelve independent 60fps AnimationTimers doubled the GPU work for no visual gain
@@ -167,6 +169,7 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
 
     public LevelMeterPanel(ComboBox<String>[] inputAudioSources, ComboBox<String>[] inputAudioSourcesChannel, Settings settings) {
         this.settings = settings;
+        this.inputAudioSources = inputAudioSources;
         this.widthStepper = new ScaleStepper("Width:");
         this.heightStepper = new ScaleStepper("Height:");
 
@@ -368,6 +371,27 @@ public class LevelMeterPanel extends Stage implements LevelMeter.MonitorToggleLi
         settings.setLevelMeterWidthScale(widthStepper.factorValue());
         settings.setLevelMeterHeightScale(heightStepper.factorValue());
         SettingsUtil.saveSettings(settings, "settings");
+    }
+
+    /**
+     * Re-resolves every meter's device and restarts the ones in use: the settings tab's
+     * device re-scan calls this after new hardware appears. The selections themselves have
+     * not changed, so the value listeners stay silent — this does for every meter what a
+     * selection change does for one.
+     */
+    public void restartMetersAfterDeviceRescan() {
+        for (int i = 0; i < inputAudioSources.length; i++) {
+            LevelMeter vuMeter = vuMeters.get(Settings.LANGUAGES[i].name());
+            if (vuMeter == null) {
+                continue;
+            }
+            String deviceName = inputAudioSources[i].getValue();
+            vuMeter.stop();
+            vuMeter.setMixerInfo(getMixerInfo(deviceName));
+            if (isShowing() && !"Not Used".equals(deviceName)) {
+                vuMeter.start();
+            }
+        }
     }
 
     private void startAllMeters() {

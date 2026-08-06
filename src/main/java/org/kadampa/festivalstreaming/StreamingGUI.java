@@ -490,6 +490,11 @@ public class StreamingGUI extends Application {
                 // Restoring the same value fires no change event, so the modes - which a
                 // freshly started virtual camera only now reports - are refreshed by hand
                 populateVideoInputModes();
+                // Same silence for the level meters: their restart normally rides on a
+                // selection change, so a meter waiting for this very device is poked here
+                if (vuMeterPanel != null) {
+                    vuMeterPanel.restartMetersAfterDeviceRescan();
+                }
                 startButton.setDisable(streamRecorder.isAliveProperty().get());
                 devicesRefreshing.set(false);
             });
