@@ -451,9 +451,14 @@ public class StreamingGUI extends Application {
     /**
      * Re-reads the device lists without restarting the program: the sound card or the
      * capture card is often plugged in only after launch. The enumeration shells out to
-     * ffmpeg with multi-second deadlines, so it runs off the FX thread; the selections
-     * survive untouched — a device still missing stays selected the way a saved setting
-     * does, and a newly plugged one simply appears in its list.
+     * ffmpeg with multi-second deadlines, so it runs off the FX thread.
+     * <p>
+     * The scan never changes a setting. Every selection survives untouched — a device
+     * still missing stays selected the way a saved setting does, and a newly plugged one
+     * simply appears in its list. Channel lists and video modes are only rebuilt for a
+     * device that is present and answered the scan, so a configured channel cannot be
+     * clamped away by a device that is absent or momentarily silent; the one exception is
+     * a present device that genuinely no longer offers what was chosen.
      */
     private void refreshDevices() {
         devicesRefreshing.set(true);
@@ -470,10 +475,10 @@ public class StreamingGUI extends Application {
             List<String> audioNames = audioDeviceNames();
             List<String> videoNames = videoDeviceNames();
             // The channel lists follow the selected devices, whose channel counts can be
-            // asked now that the hardware may finally be there
+            // asked now that the hardware may finally be there; zero means "leave alone"
             int[] channelCounts = new int[selectedAudio.length];
             for (int i = 0; i < selectedAudio.length; i++) {
-                channelCounts[i] = channelCountOf(selectedAudio[i]);
+                channelCounts[i] = rescanChannelCount(selectedAudio[i], audioNames);
             }
             Platform.runLater(() -> {
                 for (int i = 0; i < inputAudioSources.length; i++) {
@@ -482,14 +487,19 @@ public class StreamingGUI extends Application {
                     audioInput.getItems().setAll(SettingsUtil.AUDIO_SOURCE_NOT_USED);
                     audioInput.getItems().addAll(audioNames);
                     audioInput.setValue(selected);
-                    populateChannels(i, channelCounts[i]);
+                    if (channelCounts[i] > 0) {
+                        populateChannels(i, channelCounts[i]);
+                    }
                 }
                 String selectedVideo = inputVideoSource.getValue();
                 inputVideoSource.getItems().setAll(videoNames);
                 inputVideoSource.setValue(selectedVideo);
                 // Restoring the same value fires no change event, so the modes - which a
-                // freshly started virtual camera only now reports - are refreshed by hand
-                populateVideoInputModes();
+                // freshly started virtual camera only now reports - are refreshed by hand.
+                // Only for a present device: an absent one keeps its configured mode
+                if (selectedVideo != null && videoNames.contains(selectedVideo)) {
+                    populateVideoInputModes();
+                }
                 // Same silence for the level meters: their restart normally rides on a
                 // selection change, so a meter waiting for this very device is poked here
                 if (vuMeterPanel != null) {
@@ -512,6 +522,25 @@ public class StreamingGUI extends Application {
      */
     private void populateChannels(int languageIndex, String deviceName) {
         populateChannels(languageIndex, channelCountOf(deviceName));
+    }
+
+    /**
+     * The channel count to apply during a device re-scan, or zero for "leave the channel
+     * list untouched": a device that is absent, unused, or momentarily unable to answer
+     * must not reshape a configured channel selection — {@link #channelCountOf(String)}'s
+     * stereo fallback would clamp a mixer channel down to Left/Right.
+     */
+    private int rescanChannelCount(String deviceName, List<String> presentDevices) {
+        if (deviceName == null || SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName)
+                || !presentDevices.contains(deviceName)) {
+            return 0;
+        }
+        if (Host.isLinux()) {
+            // Unlike channelCountOf, an unanswered query stays zero instead of becoming
+            // a stereo guess
+            return PulseAudioDevices.channelCount(settings.getFfmpegPath(), deviceName);
+        }
+        return channelCountOf(deviceName);
     }
 
     /**
