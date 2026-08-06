@@ -871,6 +871,22 @@ public class StreamingGUI extends Application {
         SettingsUtil.saveSettings(settings, "settings");
     }
 
+    /**
+     * The strip under everything else: which build this is, when it was made, and a link
+     * to the commit history that produced it — the operator's "what's new in this build".
+     */
+    private HBox buildFooter() {
+        Label version = new Label(BuildInfo.versionLine());
+        version.setStyle("-fx-font-size: 11px; -fx-text-fill: #777777;");
+        Hyperlink whatsNew = new Hyperlink("What's new");
+        whatsNew.setStyle("-fx-font-size: 11px;");
+        whatsNew.setOnAction(e -> getHostServices().showDocument(BuildInfo.whatsNewUrl()));
+        HBox footer = new HBox(8, version, whatsNew);
+        footer.setAlignment(Pos.CENTER_RIGHT);
+        footer.setPadding(new Insets(2, 10, 4, 10));
+        return footer;
+    }
+
     private ScrollPane buildUI() {
         VBox root = new VBox();
         // The logo lives in the status bar: the title row it used to share with the application
@@ -1587,7 +1603,11 @@ public class StreamingGUI extends Application {
     public void start(Stage primaryStage) {
         this.primaryStage = primaryStage;
         ScrollPane pane = buildUI();
-        scene = new Scene(pane, WINDOW_WIDTH, WINDOW_HEIGHT);
+        // The build footer sits under the scroll pane, not inside it, so it stays visible
+        // whatever the tabs do; the state colours keep styling the scroll pane as before
+        BorderPane shell = new BorderPane(pane);
+        shell.setBottom(buildFooter());
+        scene = new Scene(shell, WINDOW_WIDTH, WINDOW_HEIGHT);
         scene.getStylesheets().add("javafx@main.css");
         primaryStage.setScene(scene);
         primaryStage.setTitle("FFmpeg GUI");

@@ -15,6 +15,8 @@
         <javafx.version>20</javafx.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <!-- Stamped into build.properties for the GUI footer; always UTC: see BuildInfo -->
+        <maven.build.timestamp.format>yyyy-MM-dd'T'HH:mm:ssX</maven.build.timestamp.format>
     </properties>
 
     <dependencies>
@@ -59,6 +61,24 @@
         <!-- Version the jar from git: <pom version>.<commit count>-<short hash>,
              e.g. KFS-1.0.945-944e84f.jar. Bumps automatically with every commit. -->
         <finalName>${project.artifactId}-${project.version}.${git.total.commit.count}-${git.commit.id.abbrev}</finalName>
+        <resources>
+            <!-- build.properties alone is filtered (it carries the build timestamp);
+                 everything else is copied verbatim so the images and rnnn models
+                 cannot be corrupted by property substitution -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>build.properties</exclude>
+                </excludes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <includes>
+                    <include>build.properties</include>
+                </includes>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
         <plugins>
             <!-- Exposes git.total.commit.count / git.commit.id.abbrev to the build -->
             <plugin>
@@ -84,6 +104,9 @@
                         <includeOnlyProperty>git.commit.id.abbrev</includeOnlyProperty>
                         <includeOnlyProperty>git.commit.time</includeOnlyProperty>
                         <includeOnlyProperty>git.commit.message.short</includeOnlyProperty>
+                        <!-- No git.build.time here: plugin 7.x no longer generates it
+                             (reproducible builds); the footer's timestamp comes from the
+                             filtered build.properties instead -->
                     </includeOnlyProperties>
                 </configuration>
             </plugin>
