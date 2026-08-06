@@ -1735,15 +1735,34 @@ public class StreamingGUI extends Application {
 
         advancedGrid.add(new Label("Comm. output directory:"), 0, row);
         inputCommDirectory.setPromptText("Empty: the main output directory");
-        advancedGrid.add(inputCommDirectory, 1, row);
-        GridPane.setColumnSpan(inputCommDirectory, 5);
+        Button pickCommDirectoryButton = new Button("Choose Directory");
+        pickCommDirectoryButton.setOnAction(event -> {
+            DirectoryChooser directoryChooser = new DirectoryChooser();
+            directoryChooser.setTitle("Select the communication recording directory");
+            // Open where the recording would currently go
+            File current = new File(inputCommDirectory.getText().isBlank()
+                    ? inputOutputDirectory.getText() : inputCommDirectory.getText());
+            if (current.isDirectory()) {
+                directoryChooser.setInitialDirectory(current);
+            }
+            File selectedDirectory = directoryChooser.showDialog(scene.getWindow());
+            if (selectedDirectory != null) {
+                inputCommDirectory.setText(selectedDirectory.getAbsolutePath());
+            }
+        });
         inputCommDirectory.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(inputCommDirectory, Priority.ALWAYS);
+        HBox commDirectoryHBox = new HBox(8, inputCommDirectory, pickCommDirectoryButton);
+        commDirectoryHBox.setAlignment(Pos.CENTER_LEFT);
+        advancedGrid.add(commDirectoryHBox, 1, row);
+        GridPane.setColumnSpan(commDirectoryHBox, 5);
 
         // The fields only matter while the extra recording is wanted
         inputCommResolution.disableProperty().bind(inputCommRecording.selectedProperty().not());
         inputCommVideoBitrate.disableProperty().bind(inputCommRecording.selectedProperty().not());
         inputCommAudioBitrate.disableProperty().bind(inputCommRecording.selectedProperty().not());
         inputCommDirectory.disableProperty().bind(inputCommRecording.selectedProperty().not());
+        pickCommDirectoryButton.disableProperty().bind(inputCommRecording.selectedProperty().not());
 
         Button saveButton = new Button("Save settings");
         saveButton.getStyleClass().add("event-button");
