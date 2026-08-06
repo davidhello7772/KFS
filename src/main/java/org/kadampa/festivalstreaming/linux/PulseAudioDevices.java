@@ -1,4 +1,6 @@
-package org.kadampa.festivalstreaming;
+package org.kadampa.festivalstreaming.linux;
+
+import org.kadampa.festivalstreaming.Host;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;

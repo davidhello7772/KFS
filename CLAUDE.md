@@ -10,9 +10,15 @@ plus a multichannel audio interface carrying interpreters, mixed into one mpegts
 with a named audio track per language, with live level meters and alarms in the GUI.
 
 - Java 17, JavaFX, single Maven module, main class `org.kadampa.festivalstreaming.GUIStarter`
-- All sources in one package: `src/main/java/org/kadampa/festivalstreaming/`
+- Sources under `src/main/java/org/kadampa/festivalstreaming/`, split by platform:
+  - root package — the cross-platform core (GUI, settings, recorder, capture manager, meters)
+  - `linux/` — `PulseAudioDevices`, `V4l2Devices`, `AudioRelay`
+  - `macos/` — `AvFoundationDevices`, `AudioPipe`
+  - Windows has no dedicated classes: dshow lets ffmpeg open the devices itself, so its
+    handling lives inline in the core behind `Host.isLinux()/isMac()` checks
 - **JPMS**: `module-info.java` declares the module; the `opens org.kadampa.festivalstreaming
-  to com.google.gson` line is load-bearing (Settings reflection) — do not remove it
+  to com.google.gson` line is load-bearing (Settings reflection) — do not remove it. The
+  platform subpackages need no module-info entries: nothing reflects into them
 - No test suite: verify by compiling and by running against real devices
 
 ## Build & Run

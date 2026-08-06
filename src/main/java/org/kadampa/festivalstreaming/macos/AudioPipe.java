@@ -1,4 +1,7 @@
-package org.kadampa.festivalstreaming;
+package org.kadampa.festivalstreaming.macos;
+
+import org.kadampa.festivalstreaming.AudioCaptureManager;
+import org.kadampa.festivalstreaming.AudioSamples;
 
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.Mixer;

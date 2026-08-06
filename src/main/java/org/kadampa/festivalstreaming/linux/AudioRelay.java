@@ -1,4 +1,4 @@
-package org.kadampa.festivalstreaming;
+package org.kadampa.festivalstreaming.linux;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +34,7 @@ import java.io.OutputStream;
  * bound. How much was waiting when ffmpeg took its first read is logged: on a healthy
  * start it is the whole start-up backlog that a plain pipe would have dropped.
  */
-final class AudioRelay {
+public final class AudioRelay {
 
     /** Room for about 17 seconds of ten-channel 48kHz 16-bit audio (960KB/s). */
     private static final int RING_CAPACITY = 16 * 1024 * 1024;
@@ -55,14 +55,14 @@ final class AudioRelay {
     private long overflowed;        // bytes sacrificed because ffmpeg stopped reading
     private boolean firstTakeLogged;
 
-    AudioRelay(InputStream source, OutputStream sink, int bytesPerSecond) {
+    public AudioRelay(InputStream source, OutputStream sink, int bytesPerSecond) {
         this.source = source;
         this.sink = sink;
         this.bytesPerSecond = Math.max(1, bytesPerSecond);
     }
 
     /** Starts the two carrier threads; they end when either process goes away. */
-    void start() {
+    public void start() {
         Thread reader = new Thread(this::readAll, "audio-relay-reader");
         Thread writer = new Thread(this::writeAll, "audio-relay-writer");
         reader.setDaemon(true);
@@ -72,7 +72,7 @@ final class AudioRelay {
     }
 
     /** Lets both threads finish; safe to call more than once. */
-    void stop() {
+    public void stop() {
         stopped = true;
         synchronized (this) {
             notifyAll();

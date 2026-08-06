@@ -1,5 +1,7 @@
 package org.kadampa.festivalstreaming;
 
+import org.kadampa.festivalstreaming.linux.PulseAudioDevices;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -213,7 +215,7 @@ public final class Host {
      * Runs ffmpeg and returns its merged output. Used for the queries whose answer ffmpeg writes
      * to stderr and which end in an expected non-zero exit, so the exit code is not checked.
      */
-    static List<String> runFfmpeg(String configuredPath, String... arguments) {
+    public static List<String> runFfmpeg(String configuredPath, String... arguments) {
         List<String> command = new ArrayList<>();
         command.add(ffmpegExecutable(configuredPath));
         command.add("-hide_banner");
@@ -225,7 +227,7 @@ public final class Host {
      * Runs any short query command with the same deadline and drain safety as the ffmpeg
      * queries, and an empty answer instead of an exception when the program is not there.
      */
-    static List<String> runCommand(List<String> command) {
+    public static List<String> runCommand(List<String> command) {
         List<String> lines = Collections.synchronizedList(new ArrayList<>());
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();

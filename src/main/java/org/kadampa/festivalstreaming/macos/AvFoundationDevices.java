@@ -1,4 +1,6 @@
-package org.kadampa.festivalstreaming;
+package org.kadampa.festivalstreaming.macos;
+
+import org.kadampa.festivalstreaming.Host;
 
 import java.util.ArrayList;
 import java.util.Comparator;

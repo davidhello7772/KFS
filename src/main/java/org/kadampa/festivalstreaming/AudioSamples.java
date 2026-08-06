@@ -7,7 +7,7 @@ package org.kadampa.festivalstreaming;
  * the headphone monitoring have to pick a numbered channel rather than assume left and right.
  * Signed little-endian only, which is what {@code findCaptureFormats} asks the device for.
  */
-final class AudioSamples {
+public final class AudioSamples {
 
     private AudioSamples() {
     }

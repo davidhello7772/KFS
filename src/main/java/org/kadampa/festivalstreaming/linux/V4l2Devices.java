@@ -1,4 +1,6 @@
-package org.kadampa.festivalstreaming;
+package org.kadampa.festivalstreaming.linux;
+
+import org.kadampa.festivalstreaming.Host;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -10,7 +12,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.kadampa.festivalstreaming.AvFoundationDevices.CaptureMode;
+import org.kadampa.festivalstreaming.macos.AvFoundationDevices.CaptureMode;
 
 /**
  * Reads the Linux cameras straight from ffmpeg's Video4Linux2 input, the same way
