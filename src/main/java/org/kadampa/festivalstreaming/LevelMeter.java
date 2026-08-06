@@ -874,9 +874,16 @@ public class LevelMeter {
         running = true;
         setWarningDisplay(false, "", null);
         audioDataListener = new AudioCaptureManager.AudioDataListener() {
+            private volatile boolean deviceWarningShown;
+
             @Override
             public void onAudioData(byte[] buffer, int bytesRead, AudioFormat format) {
                 if (running) {
+                    if (deviceWarningShown) {
+                        // The capture recovered (it reopens itself after a device hiccup)
+                        deviceWarningShown = false;
+                        setWarningDisplay(false, "", null);
+                    }
                     currentDb = calculateLevelImproved(buffer, bytesRead, format);
                 }
             }
@@ -884,6 +891,7 @@ public class LevelMeter {
             @Override
             public void onCaptureError(String message) {
                 if (running) {
+                    deviceWarningShown = true;
                     setWarningDisplay(true, "Device unavailable", COLOR_WARNING_HIGH);
                 }
             }

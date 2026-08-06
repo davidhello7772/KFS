@@ -167,6 +167,10 @@ public class AudioCaptureManager {
         private volatile String channel;
         private AudioFormat captureFormat;
         private AudioFormat playbackFormat;
+        /** When samples last arrived, watched on Linux to catch a silently dead recorder. */
+        private volatile long lastDataNanos;
+        private static final long STALL_TIMEOUT_NANOS = 3_000_000_000L;
+        private static final long RETRY_DELAY_MS = 2000;
 
         DeviceCapture(Mixer.Info mixerInfo) {
             this.mixerInfo = mixerInfo;
@@ -383,56 +387,29 @@ public class AudioCaptureManager {
             running = true;
             captureThread = new Thread(() -> {
                 try {
-                    int lineBufferSize;
-                    if (Host.isLinux()) {
-                        lineBufferSize = openLinuxCapture();
-                    } else {
-                        openInputLine();
-                        inputLine.start();
-                        lineBufferSize = inputLine.getBufferSize();
-                    }
-                    playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
-
-                    byte[] inputBuffer = new byte[lineBufferSize];
-                    int outputBufferSize = (inputBuffer.length / captureFormat.getFrameSize()) * playbackFormat.getFrameSize();
-                    byte[] outputBuffer = new byte[outputBufferSize];
-
-                    // Read a quarter of the line buffer per call (~37ms): keeps the meters
-                    // responsive and leaves headroom in the line buffer against overruns.
-                    int chunkSize = inputBuffer.length / 4;
-                    chunkSize -= chunkSize % captureFormat.getFrameSize();
-                    if (chunkSize <= 0) {
-                        chunkSize = captureFormat.getFrameSize();
-                    }
-
-                    System.out.println("Started capture: " + captureFormat + ", buffer: " + inputBuffer.length + " bytes");
-
                     while (running) {
-                        int bytesRead = readChunk(inputBuffer, chunkSize);
-                        if (bytesRead < 0) {
-                            if (running) {
-                                throw new java.io.IOException("The audio capture ended unexpectedly");
-                            }
+                        try {
+                            captureOnce();
                             break;
-                        }
-                        if (bytesRead > 0) {
+                        } catch (Exception e) {
+                            if (!running) {
+                                break;
+                            }
+                            System.err.println("Error in audio capture thread for " + mixerInfo.getName() + ": " + e.getMessage());
                             for (AudioDataListener listener : listeners) {
-                                listener.onAudioData(inputBuffer, bytesRead, captureFormat);
+                                listener.onCaptureError(e.getMessage());
                             }
-                            if (monitorStartPending) {
-                                monitorStartPending = false;
-                                beginMonitoringPlayback();
+                            cleanup();
+                            if (!Host.isLinux()) {
+                                return;
                             }
-                            if (monitoring) {
-                                writeToMonitor(inputBuffer, bytesRead, outputBuffer);
-                            }
+                            // The device may only have re-enumerated (a USB hiccup kills the
+                            // capture without a trace): keep trying until it answers again
+                            Thread.sleep(RETRY_DELAY_MS);
                         }
                     }
-                } catch (Exception e) {
-                    System.err.println("Error in audio capture thread for " + mixerInfo.getName() + ": " + e.getMessage());
-                    for (AudioDataListener listener : listeners) {
-                        listener.onCaptureError(e.getMessage());
-                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 } finally {
                     cleanup();
                 }
@@ -440,6 +417,88 @@ public class AudioCaptureManager {
             captureThread.setDaemon(true);
             captureThread.setName("AudioCapture-" + mixerInfo.getName());
             captureThread.start();
+        }
+
+        /** Opens the device and reads it until the capture stops or the source dies. */
+        private void captureOnce() throws Exception {
+            int lineBufferSize;
+            if (Host.isLinux()) {
+                lineBufferSize = openLinuxCapture();
+                startStallWatchdog(linuxRecorder);
+            } else {
+                openInputLine();
+                inputLine.start();
+                lineBufferSize = inputLine.getBufferSize();
+            }
+            playbackFormat = new AudioFormat(captureFormat.getSampleRate(), 16, 1, true, false);
+
+            byte[] inputBuffer = new byte[lineBufferSize];
+            int outputBufferSize = (inputBuffer.length / captureFormat.getFrameSize()) * playbackFormat.getFrameSize();
+            byte[] outputBuffer = new byte[outputBufferSize];
+
+            // Read a quarter of the line buffer per call (~37ms): keeps the meters
+            // responsive and leaves headroom in the line buffer against overruns.
+            int chunkSize = inputBuffer.length / 4;
+            chunkSize -= chunkSize % captureFormat.getFrameSize();
+            if (chunkSize <= 0) {
+                chunkSize = captureFormat.getFrameSize();
+            }
+
+            System.out.println("Started capture: " + captureFormat + ", buffer: " + inputBuffer.length + " bytes");
+
+            while (running) {
+                int bytesRead = readChunk(inputBuffer, chunkSize);
+                if (bytesRead < 0) {
+                    if (running) {
+                        throw new java.io.IOException("The audio capture ended unexpectedly");
+                    }
+                    break;
+                }
+                if (bytesRead > 0) {
+                    lastDataNanos = System.nanoTime();
+                    for (AudioDataListener listener : listeners) {
+                        listener.onAudioData(inputBuffer, bytesRead, captureFormat);
+                    }
+                    if (monitorStartPending) {
+                        monitorStartPending = false;
+                        beginMonitoringPlayback();
+                    }
+                    if (monitoring) {
+                        writeToMonitor(inputBuffer, bytesRead, outputBuffer);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Destroys the recorder when samples stop arriving, which unblocks the capture thread's
+         * read so it can reopen the device. A recorder whose stream the server has dropped (the
+         * device re-enumerated, the server restarted) neither delivers nor exits, and without
+         * this the capture thread would wait on it forever and the meters would freeze on their
+         * last value (observed live with the Qu-5 after its USB connection blinked).
+         */
+        private void startStallWatchdog(Process recorder) {
+            lastDataNanos = System.nanoTime();
+            Thread watchdog = new Thread(() -> {
+                while (running && recorder == linuxRecorder && recorder.isAlive()) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    if (System.nanoTime() - lastDataNanos > STALL_TIMEOUT_NANOS) {
+                        System.err.println("The capture of " + mixerInfo.getName() + " stalled, restarting it");
+                        // Forcibly: an ordinary terminate leaves a wedged recorder blocking
+                        // the pipe, and killing it is what frees the capture thread
+                        recorder.destroyForcibly();
+                        return;
+                    }
+                }
+            });
+            watchdog.setDaemon(true);
+            watchdog.setName("AudioCaptureWatchdog-" + mixerInfo.getName());
+            watchdog.start();
         }
 
         /**
@@ -469,12 +528,23 @@ public class AudioCaptureManager {
             }
             String nodeName = PulseAudioDevices.resolveName(ffmpegPath, deviceName);
             captureFormat = new AudioFormat(preferredSampleRate, 16, channels, true, false);
-            linuxRecorder = new ProcessBuilder("pw-record",
+            // --raw matters: writing to standard output pw-record otherwise prepends a
+            // 24-byte AU file header, which read as samples shifts every channel by 12
+            List<String> command = new ArrayList<>(List.of("pw-record", "--raw",
                     "--target", nodeName != null ? nodeName : deviceName,
                     "--rate", String.valueOf(preferredSampleRate),
-                    "--channels", String.valueOf(channels),
-                    "--format", "s16",
-                    "-")
+                    "--channels", String.valueOf(channels)));
+            // The server routes stream channels to device channels by label, so without the
+            // device's own labels a mixer's channels arrive shifted: see channelMap
+            String channelMap = PulseAudioDevices.channelMap(ffmpegPath, deviceName);
+            if (channelMap != null && channelMap.split(",").length == channels) {
+                command.add("--channel-map");
+                command.add(channelMap);
+            }
+            command.add("--format");
+            command.add("s16");
+            command.add("-");
+            linuxRecorder = new ProcessBuilder(command)
                     .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start();
             linuxStream = linuxRecorder.getInputStream();
@@ -543,6 +613,11 @@ public class AudioCaptureManager {
          */
         private void stop() {
             running = false;
+            Process recorder = linuxRecorder;
+            if (recorder != null) {
+                // Unblocks a capture thread waiting on the recorder's pipe
+                recorder.destroyForcibly();
+            }
             Thread thread = captureThread;
             captureThread = null;
             if (thread != null) {

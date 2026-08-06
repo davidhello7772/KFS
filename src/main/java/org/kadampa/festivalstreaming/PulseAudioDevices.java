@@ -38,7 +38,12 @@ public final class PulseAudioDevices {
     private static final Pattern SOURCE_LINE = Pattern.compile("^([*\\s])\\s+(\\S+)\\s+\\[(.+)]");
 
     /** One capture source: the name ffmpeg wants, the description the user sees. */
-    public record Source(String name, String description, boolean isDefault, int channels) {
+    public record Source(String name, String description, boolean isDefault, int channels,
+                         String channelMap) {
+    }
+
+    /** What pw-dump says about one node: how many channels, and what it calls each of them. */
+    private record NodeAudio(int channels, String positions) {
     }
 
     private static volatile List<Source> cached = List.of();
@@ -54,7 +59,7 @@ public final class PulseAudioDevices {
     public static List<Source> sources(String ffmpegPath) {
         List<String> output = Host.runFfmpeg(ffmpegPath, "-sources", "pulse");
         List<Source> sources = new ArrayList<>();
-        Map<String, Integer> channelsByName = channelCountsFromPipeWire();
+        Map<String, NodeAudio> nodesByName = nodesFromPipeWire();
         Map<String, Integer> seenDescriptions = new HashMap<>();
         for (String line : output) {
             Matcher matcher = SOURCE_LINE.matcher(line);
@@ -72,8 +77,10 @@ public final class PulseAudioDevices {
             if (occurrence > 1) {
                 description = description + " (" + occurrence + ")";
             }
+            NodeAudio node = nodesByName.get(name);
             sources.add(new Source(name, description, "*".equals(matcher.group(1)),
-                    channelsByName.getOrDefault(name, 0)));
+                    node != null ? node.channels() : 0,
+                    node != null ? node.positions() : null));
         }
         cached = List.copyOf(sources);
         return cached;
@@ -104,6 +111,21 @@ public final class PulseAudioDevices {
         return source != null ? source.channels() : 0;
     }
 
+    /**
+     * The device's own channel labels, comma separated for pw-record's {@code --channel-map},
+     * or null when pw-dump could not say.
+     * <p>
+     * The server routes a stream's channels to the device's by label, not by position. Left to
+     * its default map a 32-channel stream leads with the surround labels (FL, FR, FC...) while
+     * a mixer labels its channels AUX0 onward, so every channel lands a dozen places away from
+     * where the hardware has it. Asking with the device's own labels makes the routing the
+     * identity (verified live against the Qu-5: without this, its channel 1 arrived as 13).
+     */
+    public static String channelMap(String ffmpegPath, String description) {
+        Source source = find(ffmpegPath, description);
+        return source != null ? source.channelMap() : null;
+    }
+
     private static Source find(String ffmpegPath, String description) {
         if (description == null || description.isBlank()) {
             return null;
@@ -127,15 +149,16 @@ public final class PulseAudioDevices {
     }
 
     /**
-     * Each source's channel count by source name, from pw-dump. PipeWire names its nodes exactly
-     * as its PulseAudio interface names its sources, so the two listings join on the name. An
-     * empty map when pw-dump is missing or its output cannot be read; the callers fall back.
+     * Each source's channel count and channel labels by source name, from pw-dump. PipeWire
+     * names its nodes exactly as its PulseAudio interface names its sources, so the two listings
+     * join on the name. An empty map when pw-dump is missing or its output cannot be read; the
+     * callers fall back.
      */
-    private static Map<String, Integer> channelCountsFromPipeWire() {
-        Map<String, Integer> channels = new HashMap<>();
+    private static Map<String, NodeAudio> nodesFromPipeWire() {
+        Map<String, NodeAudio> nodes = new HashMap<>();
         List<String> output = Host.runCommand(List.of("pw-dump"));
         if (output.isEmpty()) {
-            return channels;
+            return nodes;
         }
         try {
             JsonElement root = JsonParser.parseString(String.join("\n", output));
@@ -148,12 +171,29 @@ public final class PulseAudioDevices {
                 if (props == null || !props.has("node.name") || !props.has("audio.channels")) {
                     continue;
                 }
-                channels.put(props.get("node.name").getAsString(), props.get("audio.channels").getAsInt());
+                nodes.put(props.get("node.name").getAsString(),
+                        new NodeAudio(props.get("audio.channels").getAsInt(),
+                                channelPositions(props.get("audio.position"))));
             }
         } catch (RuntimeException e) {
             // Gson signals malformed or truncated output with unchecked exceptions
             logger.warn("Could not read the channel counts from pw-dump", e);
         }
-        return channels;
+        return nodes;
+    }
+
+    /** The channel labels as one comma-separated string; pw-dump writes either form. */
+    private static String channelPositions(JsonElement position) {
+        if (position == null) {
+            return null;
+        }
+        if (position.isJsonArray()) {
+            List<String> labels = new ArrayList<>();
+            for (JsonElement label : position.getAsJsonArray()) {
+                labels.add(label.getAsString());
+            }
+            return String.join(",", labels);
+        }
+        return position.getAsString();
     }
 }
