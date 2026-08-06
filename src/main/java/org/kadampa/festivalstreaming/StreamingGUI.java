@@ -51,6 +51,7 @@ import javax.sound.sampled.TargetDataLine;
 import java.io.File;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -137,6 +138,8 @@ public class StreamingGUI extends Application {
     private static final long ERROR_COLOUR_HOLD_MS = 3000;
     private static final int MAX_PLAUSIBLE_DEVICE_OPEN_MS = 10000;
     private final DoubleProperty barPulse = new SimpleDoubleProperty(1.0);
+    /** The delayed return to the idle look after a stream ends; cancelled by a new start. */
+    private PauseTransition pendingIdleReset;
     private Color barBaseColor = LIVE_GREEN;
     private long lastErrorMillis = 0;
     private long firstOpeningDeviceStartupTime = 0;
@@ -999,23 +1002,28 @@ public class StreamingGUI extends Application {
         Label consoleLabel = new Label("Console Output");
         consoleLabel.setStyle("-fx-font-weight: bold;");
         VBox consoleBox = new VBox(10, consoleLabel, consoleOutputScrollPane);
-        streamRecorder.isAliveProperty().addListener(b->{
-            if(streamRecorder.isAliveProperty().getValue()) {
-                Platform.runLater(()->{
-                    startButton.setDisable(true);
-                    currentInformationTextProperty.setValue(inProgressText());
-
-                    blinkingTimeLine.play(); // Start the animation
-                });
+        // The monitor publishes on the FX thread. The event's own value is what matters:
+        // re-reading the property here used to mishandle fast stop/start sequences.
+        streamRecorder.isAliveProperty().addListener((observable, wasAlive, isAlive) -> {
+            if (isAlive) {
+                // A reset scheduled by a previous stop must not fire on this new stream
+                if (pendingIdleReset != null) {
+                    pendingIdleReset.stop();
+                    pendingIdleReset = null;
+                }
+                startButton.setDisable(true);
+                currentInformationTextProperty.setValue(inProgressText());
+                blinkingTimeLine.play(); // Start the animation
             }
             else {
-                Platform.runLater(()->{
-                    //We wait for 3 seconds to give the time to the thread to end properly
-                    //(in the streamRecorder, we also wait 3s for the process to end before destroying it forcefully
-                    PauseTransition delay = new PauseTransition(Duration.seconds(3)); // Pause for 3 seconds
-                    delay.setOnFinished(event -> reinitialiseGraphicElements());
-                    delay.play();
+                //We wait for 3 seconds to give the time to the thread to end properly
+                //(in the streamRecorder, we also wait 3s for the process to end before destroying it forcefully
+                pendingIdleReset = new PauseTransition(Duration.seconds(3));
+                pendingIdleReset.setOnFinished(event -> {
+                    pendingIdleReset = null;
+                    reinitialiseGraphicElements();
                 });
+                pendingIdleReset.play();
             }
         });
 
@@ -1070,8 +1078,11 @@ public class StreamingGUI extends Application {
         currentInformationTextProperty.setValue(waitingText());
         stopButton.setDisable(true);
         blinkingTimeLine.stop();
+        // An error arriving as the stream died must not tint the next run orange
+        barBaseColor = LIVE_GREEN;
         nowPlayingBox.setStyle("-fx-background-color: -red-color;");
-        startButton.setDisable(streamRecorder.isAliveProperty().getValue());
+        // Only reached from a stream-ended event (a new start cancels the pending reset)
+        startButton.setDisable(false);
         primaryStage.getIcons().setAll(stateIcon(false));
     }
 
@@ -1984,31 +1995,41 @@ public class StreamingGUI extends Application {
             Task<Void> task = new Task<>() {
                 @Override
                 protected Void call() {
-                    if (!playingError) {
-                        playingError = true;
+                    if (playingError) {
+                        return null;
+                    }
+                    playingError = true;
+                    // However playback ends - or fails to start - the flag has to come back,
+                    // or every later alarm stays silent for the rest of the session
+                    try {
                         String beepSound = Objects.requireNonNull(getClass().getResource("/error.wav")).toString();
                         Media media = new Media(beepSound);
                         MediaPlayer mediaPlayer = new MediaPlayer(media);
                         CountDownLatch latch = new CountDownLatch(1);
 
-                        mediaPlayer.play();
-                        mediaPlayer.setOnEndOfMedia(() -> Platform.runLater(() -> {
-                            playingError = false;
+                        mediaPlayer.setOnEndOfMedia(latch::countDown);
+                        mediaPlayer.setOnError(() -> {
+                            logger.error("The alert sound failed to play", mediaPlayer.getError());
                             latch.countDown();
-                        }));
-
-                        try {
-                            latch.await();  // Wait for the media to finish
-                        } catch (InterruptedException e) {
-                            logger.error("An error occurred", e);
+                        });
+                        mediaPlayer.play();
+                        if (!latch.await(10, TimeUnit.SECONDS)) {
+                            logger.warn("The alert sound never finished; giving up on it");
                         }
+                        mediaPlayer.dispose();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } catch (RuntimeException e) {
+                        logger.error("The alert sound could not be played", e);
+                    } finally {
+                        playingError = false;
                     }
                     return null;
                 }
             };
 
             Thread thread = new Thread(task);
-            thread.setDaemon(false); // Ensure the thread does not stop when the application exits
+            thread.setDaemon(true); // The alarm must never keep the application alive on exit
             thread.start();
         }
         if(oldLine!=null && oldLine.startsWith("frame=") && newLine.startsWith("frame="))
