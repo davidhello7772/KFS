@@ -46,6 +46,19 @@ documented per platform — **read the matching file before debugging**:
 - macOS problems → [docs/debugging-macos.md](docs/debugging-macos.md)
 - Windows problems → [docs/debugging-windows.md](docs/debugging-windows.md)
 
+## Output model: one process, up to two encodes, up to three sinks
+
+Two KFS instances can never run at once on Linux — v4l2loopback gives its streaming slot
+to one reader. So everything is one ffmpeg: the livestream encode goes to SRT and/or the
+VOD file (a `tee`: identical bits, no extra cost), and the optional **communication
+recording** is a second, independent encode (own resolution/bitrates/directory — the
+settings' "Comm." fields) appended as a further output. Hard-won ffmpeg facts baked into
+`StreamRecorderRunnable`: output options reset at every sink and must be repeated per
+output; a tee output silently discards command-line mpegts options (they must sit inside
+the slave spec); and a tee whose every real slave failed kills the whole process unless a
+null co-slave (`| [f=null]-`) rides along — that null leg is why a full disk costs only
+the communication file, never the stream. Dual NVENC sessions are fine on this hardware.
+
 ## The audio delay setting (all platforms)
 
 The GUI's audio delay compensates the real capture-chain latency only: **≈500 ms is the

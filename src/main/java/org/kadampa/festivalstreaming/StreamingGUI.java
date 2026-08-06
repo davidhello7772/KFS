@@ -87,6 +87,12 @@ public class StreamingGUI extends Application {
     private final TextField inputSrtURL;
     private final TextField inputOutputDirectory;
     private final ComboBox<String> inputAudioBitrate;
+    /** The extra recording for the communication team: its own quality and destination. */
+    private final CheckBox inputCommRecording;
+    private final ComboBox<String> inputCommResolution;
+    private final ComboBox<String> inputCommVideoBitrate;
+    private final ComboBox<String> inputCommAudioBitrate;
+    private final TextField inputCommDirectory;
     /** The rate the capture devices run at; the recording is encoded at the same rate. */
     private final ComboBox<String> inputAudioSampleRate;
     private final ComboBox<String> inputFramePerSecond;
@@ -238,6 +244,16 @@ public class StreamingGUI extends Application {
         inputSrtResolution.getItems().add("hd480");
         inputSrtResolution.getItems().add("hd720");
         inputSrtResolution.getItems().add("hd1080");
+
+        // The extra recording for the communication team: its own quality and destination
+        inputCommRecording = new CheckBox("Also record a separate file for the communication team");
+        inputCommResolution = new ComboBox<>();
+        inputCommResolution.getItems().addAll("hd480", "hd720", "hd1080");
+        inputCommVideoBitrate = new ComboBox<>();
+        inputCommVideoBitrate.getItems().addAll(inputVideoBitrate.getItems());
+        inputCommAudioBitrate = new ComboBox<>();
+        inputCommAudioBitrate.getItems().addAll(inputAudioBitrate.getItems());
+        inputCommDirectory = new TextField();
 
         inputOutputFileResolution = new ComboBox<>();
         inputEncoder = new ComboBox<>();
@@ -918,6 +934,12 @@ public class StreamingGUI extends Application {
         inputAudioBitrate.setValue(settings.getAudioBitrate());
         inputAudioSampleRate.setValue(settings.getAudioSampleRate());
         inputFramePerSecond.setValue(settings.getFps());
+        inputCommRecording.setSelected(settings.isCommRecording());
+        // Empty saved values keep the defaults the settings tab put in place
+        if (!settings.getCommResolution().isEmpty()) inputCommResolution.setValue(settings.getCommResolution());
+        if (!settings.getCommVideoBitrate().isEmpty()) inputCommVideoBitrate.setValue(settings.getCommVideoBitrate());
+        if (!settings.getCommAudioBitrate().isEmpty()) inputCommAudioBitrate.setValue(settings.getCommAudioBitrate());
+        inputCommDirectory.setText(settings.getCommDirectory());
     }
 
     /** The saved recording folder, or this machine's default when it points somewhere else. */
@@ -967,6 +989,11 @@ public class StreamingGUI extends Application {
         settings.setAudioBitrate(inputAudioBitrate.getValue());
         settings.setAudioSampleRate(inputAudioSampleRate.getValue());
         settings.setFps(inputFramePerSecond.getValue());
+        settings.setCommRecording(inputCommRecording.isSelected());
+        settings.setCommResolution(inputCommResolution.getValue());
+        settings.setCommVideoBitrate(inputCommVideoBitrate.getValue());
+        settings.setCommAudioBitrate(inputCommAudioBitrate.getValue());
+        settings.setCommDirectory(inputCommDirectory.getText());
         for (Map.Entry<String, ColorPicker> entry : languageColorPickers.entrySet()) {
             settings.getLanguageColors().put(entry.getKey(), entry.getValue().getValue().toString());
         }
@@ -1669,6 +1696,54 @@ public class StreamingGUI extends Application {
         if(inputAudioSampleRate.getValue()==null || inputAudioSampleRate.getValue().isEmpty()) inputAudioSampleRate.setValue("48000");
         advancedGrid.add(inputAudioSampleRate, 1, row);
         inputAudioSampleRate.setPrefWidth(comboWith);
+        row++;
+
+        Label commInfoLabel = new Label("?");
+        commInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip commTooltip = new Tooltip("""
+                Records one more file during the session, encoded separately from the livestream:
+                typically hd1080 at 5000k for the communication team while the stream stays hd720.
+                For a true 1080p file, OBS must output 1920x1080 and the video input mode match it.
+
+                The file is named recorded-video-communication-<date>-1080p.mp4 and goes to its own
+                directory (leave it empty to use the main output directory). If its disk fills or
+                fails, only this file stops - the livestream and the normal recording continue.""");
+        Tooltip.install(commInfoLabel, commTooltip);
+        commTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+        commTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+        commTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        commTooltip.getStyleClass().add("tooltip");
+        HBox commCheckHBox = new HBox(6, inputCommRecording, commInfoLabel);
+        commCheckHBox.setAlignment(Pos.CENTER_LEFT);
+        advancedGrid.add(commCheckHBox, 0, row);
+        GridPane.setColumnSpan(commCheckHBox, 6);
+        row++;
+
+        advancedGrid.add(new Label("Comm. resolution:"), 0, row);
+        if (inputCommResolution.getValue() == null || inputCommResolution.getValue().isEmpty()) inputCommResolution.setValue("hd1080");
+        advancedGrid.add(inputCommResolution, 1, row);
+        inputCommResolution.setPrefWidth(comboWith);
+        advancedGrid.add(new Label("Comm. video bitrate:"), 2, row);
+        if (inputCommVideoBitrate.getValue() == null || inputCommVideoBitrate.getValue().isEmpty()) inputCommVideoBitrate.setValue("5000k");
+        advancedGrid.add(inputCommVideoBitrate, 3, row);
+        inputCommVideoBitrate.setPrefWidth(comboWith);
+        advancedGrid.add(new Label("Comm. audio bitrate:"), 4, row);
+        if (inputCommAudioBitrate.getValue() == null || inputCommAudioBitrate.getValue().isEmpty()) inputCommAudioBitrate.setValue("256k");
+        advancedGrid.add(inputCommAudioBitrate, 5, row);
+        inputCommAudioBitrate.setPrefWidth(comboWith);
+        row++;
+
+        advancedGrid.add(new Label("Comm. output directory:"), 0, row);
+        inputCommDirectory.setPromptText("Empty: the main output directory");
+        advancedGrid.add(inputCommDirectory, 1, row);
+        GridPane.setColumnSpan(inputCommDirectory, 5);
+        inputCommDirectory.setMaxWidth(Double.MAX_VALUE);
+
+        // The fields only matter while the extra recording is wanted
+        inputCommResolution.disableProperty().bind(inputCommRecording.selectedProperty().not());
+        inputCommVideoBitrate.disableProperty().bind(inputCommRecording.selectedProperty().not());
+        inputCommAudioBitrate.disableProperty().bind(inputCommRecording.selectedProperty().not());
+        inputCommDirectory.disableProperty().bind(inputCommRecording.selectedProperty().not());
 
         Button saveButton = new Button("Save settings");
         saveButton.getStyleClass().add("event-button");
@@ -1887,6 +1962,11 @@ public class StreamingGUI extends Application {
         streamRecorder.setAudioBitrate(inputAudioBitrate.getValue());
         streamRecorder.setAudioBufferSize(inputAudioSourceBuffer.getValue());
         streamRecorder.setVideoBitrate(inputVideoBitrate.getValue());
+        streamRecorder.setCommRecording(inputCommRecording.isSelected());
+        streamRecorder.setCommResolution(inputCommResolution.getValue());
+        streamRecorder.setCommVideoBitrate(inputCommVideoBitrate.getValue());
+        streamRecorder.setCommAudioBitrate(inputCommAudioBitrate.getValue());
+        streamRecorder.setCommDirectory(inputCommDirectory.getText());
         streamRecorder.setVideoBufferSize(inputVideoSourceBuffer.getValue());
         streamRecorder.setFfmpegPath(settings.getFfmpegPath());
         streamRecorder.setVideoInputMode(inputVideoInputMode.getValue());
@@ -2042,6 +2122,26 @@ public class StreamingGUI extends Application {
             if (!url.startsWith("srt://")) {
                 appendToConsole(url + " is not a valid srt url. Please enter a valid srt url to stream.","",Color.RED);
                 result = false;
+            }
+        }
+
+        if (inputCommRecording.isSelected()) {
+            String commDirectory = inputCommDirectory.getText();
+            String directory = commDirectory == null || commDirectory.isBlank()
+                    ? inputOutputDirectory.getText() : commDirectory;
+            File file = new File(directory);
+            if (!file.isDirectory()) {
+                appendToConsole(directory + " is not a directory. Please enter a valid directory for the communication recording.","",Color.RED);
+                result = false;
+            }
+            else {
+                long usableSpace = file.getUsableSpace();
+                int usableSpaceInGB = (int) (usableSpace / (1024.0 * 1024.0 * 1024.0));
+                int minimumGBNecessary = 15;
+                if(usableSpaceInGB <minimumGBNecessary) {
+                    appendToConsole("There is less than " +minimumGBNecessary+"GB available on the communication recording disk (" + usableSpaceInGB + " GB available). Free some space before recording", "", Color.RED);
+                    result = false;
+                }
             }
         }
 

@@ -123,6 +123,11 @@ public class SettingsUtil {
         sortedProps.put("outputDirectory", settings.getOutputDirectory());
         sortedProps.put("srtDef", settings.getSrtDef());
         sortedProps.put("fileDef", settings.getFileDef());
+        sortedProps.put("commRecording", String.valueOf(settings.isCommRecording()));
+        sortedProps.put("commResolution", settings.getCommResolution());
+        sortedProps.put("commVideoBitrate", settings.getCommVideoBitrate());
+        sortedProps.put("commAudioBitrate", settings.getCommAudioBitrate());
+        sortedProps.put("commDirectory", settings.getCommDirectory());
 
         // Group 4: System settings
         sortedProps.put("ffmpegPath", settings.getFfmpegPath());
@@ -159,7 +164,8 @@ public class SettingsUtil {
 
             writer.write("\n# === OUTPUT SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"outputType", "srtURL", "outputDirectory", "srtDef", "fileDef"});
+                new String[]{"outputType", "srtURL", "outputDirectory", "srtDef", "fileDef",
+                    "commRecording", "commResolution", "commVideoBitrate", "commAudioBitrate", "commDirectory"});
 
             writer.write("\n# === SYSTEM SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
@@ -392,6 +398,11 @@ public class SettingsUtil {
         settings.setTimeNeededToOpenADevice(props.getProperty("timeNeededToOpenADevice", "0"));
         settings.setSrtDef(props.getProperty("srtDef", ""));
         settings.setFileDef(props.getProperty("fileDef", ""));
+        settings.setCommRecording(Boolean.parseBoolean(props.getProperty("commRecording", "false")));
+        settings.setCommResolution(props.getProperty("commResolution", "hd1080"));
+        settings.setCommVideoBitrate(props.getProperty("commVideoBitrate", "5000k"));
+        settings.setCommAudioBitrate(props.getProperty("commAudioBitrate", "256k"));
+        settings.setCommDirectory(props.getProperty("commDirectory", ""));
         settings.setEncoder(props.getProperty("encoder", ""));
         settings.setOutputType(props.getProperty("outputType", ""));
         settings.setSrtURL(props.getProperty("srtURL", ""));

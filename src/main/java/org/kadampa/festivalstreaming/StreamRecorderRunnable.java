@@ -35,6 +35,12 @@ public class StreamRecorderRunnable implements Runnable {
 
     private String srtUrl;
     private String outputDirectory;
+    /** The extra file for the communication team: its own quality and destination. */
+    private boolean commRecording;
+    private String commResolution;
+    private String commVideoBitrate;
+    private String commAudioBitrate;
+    private String commDirectory;
     private final StreamingGUI appContext;
     private String videoDevice;
     private final List<String> audioDevicesList = new ArrayList<>();
@@ -226,20 +232,15 @@ public class StreamRecorderRunnable implements Runnable {
         pwRecordCommand = null;
         List<String> devicesListCommand = new ArrayList<>();
         List<String> filterComplexCommand = new ArrayList<>();
-        List<String> mapCommand = new ArrayList<>();
-        List<String> parameterCommand = new ArrayList<>();
-        List<String> outputCommand = new ArrayList<>();
+        // The chain ends of the filter graph, one per language, mapped into every output
+        List<String> audioLabels = new ArrayList<>();
         //The video device
         addVideoInput(devicesListCommand);
-        mapCommand.add("-map");
-        //The device 0 is the video input
-        mapCommand.add("0:v");
 
         StringBuilder filterCommand = new StringBuilder();
         int i = 0;
         int j = 0;
         int audioDelay = delay;
-        int languageCount = 0;
 
         //The audio devices
         Map<String,Integer> alreadyOpenedAudioDevices = new LinkedHashMap<>();
@@ -311,8 +312,7 @@ public class StreamRecorderRunnable implements Runnable {
 
                 filterCommand.append("[englishfiltered").append(i).append("];");
                 filterCommand.append("[prayers").append(i).append("][englishfiltered").append(i).append("]amix=inputs=2,volume=7.6dB").append("[outmixed").append(i).append("];");
-                mapCommand.add("-map");
-                mapCommand.add("[outmixed" + i + "]");
+                audioLabels.add("outmixed" + i);
 
             } else {
                 filterCommand.append(pickChannel(deviceNumber, audioInputsChannel.get(i-1), audioDelay));
@@ -322,95 +322,154 @@ public class StreamRecorderRunnable implements Runnable {
                 filterCommand.append(speechModel.repeat(Math.max(0, noiseReductionValues.get(i - 1))));
                 filterCommand.append("[outfiltered").append(i).append("];");
                 filterCommand.append("[prayers").append(i).append("][englishToBeMixed").append(i).append("][outfiltered").append(i).append("]amix=inputs=3,volume=9.3dB").append("[outmixed").append(i).append("];");
-                mapCommand.add("-map");
-                mapCommand.add("[outmixed" + i + "]");
+                audioLabels.add("outmixed" + i);
             }
         }
 
-        for (int k = 2; k < Settings.LANGUAGES.length; k++) {
-            if (!appContext.getInputAudioSources()[k].getValue().equals("Not Used")) {
-                parameterCommand.add("-metadata:s:a:" + languageCount);
-                // Use nativeName if available, otherwise use name
-                String title = Settings.LANGUAGES[k].nativeName() != null ? Settings.LANGUAGES[k].nativeName() : Settings.LANGUAGES[k].name();
-                parameterCommand.add("title=" + title);
-                parameterCommand.add("-metadata:s:a:" + languageCount);
-                parameterCommand.add("language=" + Settings.LANGUAGES[k].code());
-                languageCount++;
+        // A filter label feeds exactly one output stream, so the communication recording -
+        // a second, independent encode - doubles every language chain with a split
+        if (commRecording) {
+            for (String label : audioLabels) {
+                filterCommand.append('[').append(label).append("]asplit=2[")
+                        .append(label).append("s][").append(label).append("f];");
             }
         }
-
 
         filterComplexCommand.add("-filter_complex");
         filterComplexCommand.add(filterCommand.toString());
-        parameterCommand.add("-s");
-        parameterCommand.add(outputResolution);
-        parameterCommand.add("-c:v");
-        parameterCommand.add(Host.encoderCodec(encoder));
-        parameterCommand.add("-b:v");
-        parameterCommand.add(videoBitrate);
-        parameterCommand.add("-minrate:v");
-        parameterCommand.add(videoBitrate);
-        parameterCommand.add("-maxrate:v");
-        parameterCommand.add(videoBitrate);
-        addStreamingEncoderSettings(parameterCommand);
-        parameterCommand.add("-pix_fmt");
-        parameterCommand.add(pixelFormat);
-        parameterCommand.add("-c:a");
-        parameterCommand.add("aac");
-        //Pinned rather than inherited from the capture device: see setAudioSampleRate
-        parameterCommand.add("-ar");
-        parameterCommand.add(audioSampleRate);
-        parameterCommand.add("-b:a");
-        parameterCommand.add(audioBitrate);
-
-        /*
-         * MPEG Transport Stream (MPEG-TS) is a standard digital container format used for transmission and storage of audio, video, and data.
-         * It is defined by the MPEG-2 Part 1 specification (ISO/IEC standard 13818-1).
-         * MPEG-TS is designed to address issues such as error correction and synchronization for streaming media.
-         */
-        parameterCommand.add("-f");
-        parameterCommand.add("mpegts");
-        /*
-         * -mpegts_flags +initial_discontinuity
-         * This flag is used to handle initial discontinuities in the stream.
-         * A discontinuity occurs when there is a gap or an unexpected jump in the timestamps of the packets within the stream.
-         * This can happen, for instance, when starting a live stream or switching between different sources.
-         */
-        parameterCommand.add("-mpegts_flags");
-        parameterCommand.add("+initial_discontinuity");
-
-        parameterCommand.add("-mpegts_start_pid");
-        parameterCommand.add(String.valueOf(videoPid));
-
-        outputCommand.add("-r");
-        outputCommand.add(String.valueOf(fps));
-
 
         LocalDateTime now = LocalDateTime.now();
         // Create a formatter to define the output format
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
         String formattedDateTime = now.format(formatter);
-        String fileName = "recorded-video-"+formattedDateTime+"-"+outputResolution+".mp4";
-        if(outputType==FILE_AND_URL) {
-            outputCommand.add("-f");
-            outputCommand.add("tee");
-            outputCommand.add("[f=mpegts:onfail=ignore]" + formatForFFmpegTee(outputDirectory + File.separatorChar + fileName) + " | [f=mpegts]"+ srtUrl);
+        String fileName = "recorded-video-"+formattedDateTime+"-"+displayResolution(outputResolution)+".mp4";
 
-        } else if(outputType==FILE) {
-                outputCommand.add(outputDirectory + File.separatorChar + fileName);
-            }
-            else {
-                outputCommand.add(srtUrl);
-            }
         List<String> finalCommand = new ArrayList<>();
         finalCommand.add(Host.ffmpegExecutable(ffmpegPath));
         finalCommand.addAll(devicesListCommand);
         finalCommand.addAll(filterComplexCommand);
-        finalCommand.addAll(mapCommand);
-        finalCommand.addAll(parameterCommand);
 
-        finalCommand.addAll(outputCommand);
+        // The livestream output: today's single encode, into whatever sinks the mode asks for
+        addOutputSection(finalCommand, audioLabels, commRecording ? "s" : "",
+                outputResolution, videoBitrate, audioBitrate);
+        addMpegtsOptions(finalCommand);
+        finalCommand.add("-r");
+        finalCommand.add(String.valueOf(fps));
+        if(outputType==FILE_AND_URL) {
+            finalCommand.add("-f");
+            finalCommand.add("tee");
+            finalCommand.add("[f=mpegts:onfail=ignore]" + formatForFFmpegTee(outputDirectory + File.separatorChar + fileName) + " | [f=mpegts]"+ srtUrl);
+        } else if(outputType==FILE) {
+            finalCommand.add(outputDirectory + File.separatorChar + fileName);
+        } else {
+            finalCommand.add(srtUrl);
+        }
+
+        if (commRecording) {
+            addCommRecordingSection(finalCommand, audioLabels, formattedDateTime);
+        }
         return finalCommand;
+    }
+
+    /**
+     * One complete output section: what it carries and how it is encoded. ffmpeg resets the
+     * output options at every sink, so each output repeats the whole set - and encodes on
+     * its own, which is what lets two outputs have two qualities. The labels carry the leg
+     * suffix of their asplit when the graph was doubled for a second encode.
+     */
+    private void addOutputSection(List<String> command, List<String> audioLabels, String labelSuffix,
+                                  String resolution, String videoRate, String audioRate) {
+        command.add("-map");
+        //The device 0 is the video input
+        command.add("0:v");
+        for (String label : audioLabels) {
+            command.add("-map");
+            command.add("[" + label + labelSuffix + "]");
+        }
+        addAudioMetadata(command);
+        command.add("-s");
+        command.add(resolution);
+        command.add("-c:v");
+        command.add(Host.encoderCodec(encoder));
+        command.add("-b:v");
+        command.add(videoRate);
+        command.add("-minrate:v");
+        command.add(videoRate);
+        command.add("-maxrate:v");
+        command.add(videoRate);
+        addStreamingEncoderSettings(command, videoRate);
+        command.add("-pix_fmt");
+        command.add(pixelFormat);
+        command.add("-c:a");
+        command.add("aac");
+        //Pinned rather than inherited from the capture device: see setAudioSampleRate
+        command.add("-ar");
+        command.add(audioSampleRate);
+        command.add("-b:a");
+        command.add(audioRate);
+    }
+
+    /** The language names and codes of the audio streams; indices restart at every output. */
+    private void addAudioMetadata(List<String> command) {
+        int languageCount = 0;
+        for (int k = 2; k < Settings.LANGUAGES.length; k++) {
+            if (!appContext.getInputAudioSources()[k].getValue().equals("Not Used")) {
+                command.add("-metadata:s:a:" + languageCount);
+                // Use nativeName if available, otherwise use name
+                String title = Settings.LANGUAGES[k].nativeName() != null ? Settings.LANGUAGES[k].nativeName() : Settings.LANGUAGES[k].name();
+                command.add("title=" + title);
+                command.add("-metadata:s:a:" + languageCount);
+                command.add("language=" + Settings.LANGUAGES[k].code());
+                languageCount++;
+            }
+        }
+    }
+
+    /*
+     * MPEG Transport Stream (MPEG-TS) is a standard digital container format used for transmission and storage of audio, video, and data.
+     * It is defined by the MPEG-2 Part 1 specification (ISO/IEC standard 13818-1).
+     * MPEG-TS is designed to address issues such as error correction and synchronization for streaming media.
+     * -mpegts_flags +initial_discontinuity handles the gap in timestamps a live source starts with.
+     */
+    private void addMpegtsOptions(List<String> command) {
+        command.add("-f");
+        command.add("mpegts");
+        command.add("-mpegts_flags");
+        command.add("+initial_discontinuity");
+        command.add("-mpegts_start_pid");
+        command.add(String.valueOf(videoPid));
+    }
+
+    /**
+     * The extra file for the communication team: a second, independent encode of the same
+     * inputs at its own quality and destination, appended as a further output of the same
+     * process. The sink is a tee with the mpegts options inside the slave - a tee output
+     * silently discards command-line mpegts options - plus a null co-slave, because a tee
+     * whose every real slave has failed takes the whole process down with it: with the null
+     * leg, a full or broken disk costs only this file, never the stream (both behaviours
+     * verified against ffmpeg 8.0.1).
+     */
+    private void addCommRecordingSection(List<String> command, List<String> audioLabels, String formattedDateTime) {
+        addOutputSection(command, audioLabels, "f", commResolution, commVideoBitrate, commAudioBitrate);
+        command.add("-r");
+        command.add(String.valueOf(fps));
+        command.add("-f");
+        command.add("tee");
+        String fileName = "recorded-video-communication-" + formattedDateTime + "-"
+                + displayResolution(commResolution) + ".mp4";
+        String directory = commDirectory == null || commDirectory.isBlank() ? outputDirectory : commDirectory;
+        command.add("[f=mpegts:onfail=ignore:mpegts_flags=+initial_discontinuity:mpegts_start_pid=" + videoPid + "]"
+                + formatForFFmpegTee(directory + File.separatorChar + fileName) + " | [f=null]-");
+    }
+
+    /** The human name of an ffmpeg size abbreviation, for the file names: hd720 becomes 720p. */
+    private static String displayResolution(String resolution) {
+        return switch (resolution == null ? "" : resolution) {
+            case "hd480" -> "480p";
+            case "hd720" -> "720p";
+            case "hd1080" -> "1080p";
+            default -> resolution;
+        };
     }
 
     /**
@@ -427,13 +486,13 @@ public class StreamRecorderRunnable implements Runnable {
      * interval is twelve frames, which spends nearly 40% of the bitrate on keyframes and leaves
      * too little for everything in between.
      */
-    private void addStreamingEncoderSettings(List<String> parameterCommand) {
+    private void addStreamingEncoderSettings(List<String> parameterCommand, String videoRate) {
         if (Host.isWindows()) {
             return;
         }
         // A one second buffer, which is what OBS uses for constant bitrate
         parameterCommand.add("-bufsize:v");
-        parameterCommand.add(videoBitrate);
+        parameterCommand.add(videoRate);
         parameterCommand.add("-g");
         parameterCommand.add(String.valueOf(Math.max(1, fps * KEYFRAME_INTERVAL_SECONDS)));
         if (X264_ENCODER.equals(Host.encoderCodec(encoder))) {
@@ -742,6 +801,26 @@ public class StreamRecorderRunnable implements Runnable {
 
     public void setOutputDirectory(String outputDirectory) {
         this.outputDirectory = outputDirectory;
+    }
+
+    public void setCommRecording(boolean commRecording) {
+        this.commRecording = commRecording;
+    }
+
+    public void setCommResolution(String commResolution) {
+        this.commResolution = commResolution;
+    }
+
+    public void setCommVideoBitrate(String commVideoBitrate) {
+        this.commVideoBitrate = commVideoBitrate;
+    }
+
+    public void setCommAudioBitrate(String commAudioBitrate) {
+        this.commAudioBitrate = commAudioBitrate;
+    }
+
+    public void setCommDirectory(String commDirectory) {
+        this.commDirectory = commDirectory;
     }
 
     public void setTimeNeededToOpenADevice(int timeNeededToOpenADevice) {

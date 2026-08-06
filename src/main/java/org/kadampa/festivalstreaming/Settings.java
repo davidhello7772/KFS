@@ -115,6 +115,12 @@ public class Settings implements Serializable {
     private String timeNeededToOpenADevice;
     private String srtDef;
     private String fileDef;
+    /** The extra file for the communication team: its own quality and destination. */
+    private boolean commRecording = false;
+    private String commResolution;
+    private String commVideoBitrate;
+    private String commAudioBitrate;
+    private String commDirectory;
     private String encoder;
     private String outputType;
     private String srtURL;
@@ -220,6 +226,46 @@ public class Settings implements Serializable {
 
     public void setFileDef(String fileDef) {
         this.fileDef = fileDef;
+    }
+
+    public boolean isCommRecording() {
+        return commRecording;
+    }
+
+    public void setCommRecording(boolean commRecording) {
+        this.commRecording = commRecording;
+    }
+
+    public String getCommResolution() {
+        return Objects.requireNonNullElse(commResolution, "");
+    }
+
+    public void setCommResolution(String commResolution) {
+        this.commResolution = commResolution;
+    }
+
+    public String getCommVideoBitrate() {
+        return Objects.requireNonNullElse(commVideoBitrate, "");
+    }
+
+    public void setCommVideoBitrate(String commVideoBitrate) {
+        this.commVideoBitrate = commVideoBitrate;
+    }
+
+    public String getCommAudioBitrate() {
+        return Objects.requireNonNullElse(commAudioBitrate, "");
+    }
+
+    public void setCommAudioBitrate(String commAudioBitrate) {
+        this.commAudioBitrate = commAudioBitrate;
+    }
+
+    public String getCommDirectory() {
+        return Objects.requireNonNullElse(commDirectory, "");
+    }
+
+    public void setCommDirectory(String commDirectory) {
+        this.commDirectory = commDirectory;
     }
 
     public String getEncoder() {
