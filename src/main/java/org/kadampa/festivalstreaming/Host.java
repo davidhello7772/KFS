@@ -136,8 +136,18 @@ public final class Host {
     /**
      * A writable per-user directory for the files the application unpacks for itself.
      * Deliberately hidden and space free so it is safe to inline into an ffmpeg filter string.
+     * <p>
+     * An explicit folder wins over the default, which is how one machine runs several
+     * independent configurations: a launcher passes {@code -Dkfs.dataDir=<folder>} and that
+     * copy keeps its settings, and unpacks its noise models, in there alone. A path with a
+     * space in it would break the filter strings the models are inlined into, so a
+     * configured folder must not contain one.
      */
     public static File userDataDir() {
+        String configured = System.getProperty("kfs.dataDir");
+        if (configured != null && !configured.isBlank()) {
+            return new File(configured);
+        }
         String home = System.getProperty("user.home", ".");
         if (isWindows()) {
             String localAppData = System.getenv("LOCALAPPDATA");
