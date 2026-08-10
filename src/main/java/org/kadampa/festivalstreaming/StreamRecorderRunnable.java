@@ -8,8 +8,6 @@ import org.kadampa.festivalstreaming.macos.AvFoundationDevices;
 
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,9 +18,20 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class StreamRecorderRunnable implements Runnable {
+
+    /**
+     * The packet identifier the video stream is given, and the base the audio streams count up
+     * from. It was an operator setting until it turned out that no platform this project streams
+     * to asks for a particular one - Castr does not - and every machine had been running the same
+     * 37 for years. A constant rather than a field: one number to change if a platform ever does
+     * ask, with the reason in the history rather than in a box on the settings tab.
+     */
+    public static final int VIDEO_PID = 37;
 
     /** Seconds between keyframes; two is the usual choice for a live stream. */
     private static final int KEYFRAME_INTERVAL_SECONDS = 2;
@@ -34,6 +43,8 @@ public class StreamRecorderRunnable implements Runnable {
     public final static int FILE_AND_URL=3;
 
     private String srtUrl;
+    /** The latency to force into the URL, in milliseconds, or null to send it exactly as pasted. */
+    private Integer srtLatencyMillis;
     private String outputDirectory;
     /** The extra file for the communication team: its own quality and destination. */
     private boolean commRecording;
@@ -54,7 +65,6 @@ public class StreamRecorderRunnable implements Runnable {
     private String videoBufferSize;
     private String audioBufferSize;
     private int outputType;
-    private int enMixDelay;
     private int fps;
     private int delay;
     private int timeNeededToOpenADevice;
@@ -79,10 +89,21 @@ public class StreamRecorderRunnable implements Runnable {
     // Built on the FX thread when the Information tab is filled, consumed by the encoding thread
     private volatile List<String> preparedCommand;
     private Process process = null;
-    private final StringProperty outputLineProperty = new SimpleStringProperty();
+    /**
+     * Everything ffmpeg says, in the order it said it. A queue rather than a property: a property
+     * only fires when its value changes, so a warning repeated identically - a storm of corrupt
+     * capture buffers, say - used to reach the console once and look like a single event. Both
+     * streams share it because the operator wants one chronological log, not two.
+     */
+    private final Queue<String> outputLines = new ConcurrentLinkedQueue<>();
+    /** Told, on a reader thread, that lines are waiting; the GUI drains them in batches. */
+    private volatile Runnable outputListener = () -> { };
+    private ExecutorService gobblers;
     private ProcessMonitor monitor;
     private final BooleanProperty isAliveProperty = new SimpleBooleanProperty(); // Create the property
-    private int videoPid;
+    // Lets the GUI tell a pressed Stop button from ffmpeg dying on its own, which is the
+    // difference between a quiet return to idle and a stream-lost alarm
+    private volatile boolean stopRequested;
     private static final Logger logger = LoggerFactory.getLogger(StreamRecorderRunnable.class);
 
     public StreamRecorderRunnable(StreamingGUI streamingGUI) {
@@ -92,6 +113,7 @@ public class StreamRecorderRunnable implements Runnable {
     @Override
     public void run() {
         List<String> command = takeCommand();
+        stopRequested = false;
         try {
             if (pwRecordCommand != null) {
                 // The recorder and ffmpeg are started separately and joined by an AudioRelay
@@ -112,10 +134,15 @@ public class StreamRecorderRunnable implements Runnable {
                 audioPipe.start(process.getOutputStream());
             }
             monitor = new ProcessMonitor(process, isAliveProperty);
-            StreamGobbler inputStreamGobbler = new StreamGobbler(process.getInputStream(), outputLineProperty::setValue);
-            StreamGobbler errorStreamGobbler = new StreamGobbler(process.getErrorStream(), outputLineProperty::setValue);
-            Executors.newSingleThreadExecutor().submit(inputStreamGobbler);
-            Executors.newSingleThreadExecutor().submit(errorStreamGobbler);
+            // Named daemons, shut down with the process: a fresh pair used to be created on every
+            // Start and left running, so a session of stop/start cycles quietly grew a thread each
+            gobblers = Executors.newFixedThreadPool(2, runnable -> {
+                Thread thread = new Thread(runnable, "ffmpeg-output");
+                thread.setDaemon(true);
+                return thread;
+            });
+            gobblers.submit(new StreamGobbler(process.getInputStream(), this::publishOutputLine));
+            gobblers.submit(new StreamGobbler(process.getErrorStream(), this::publishOutputLine));
             process.waitFor();
         } catch (IOException | InterruptedException e) {
             if (appContext.getSettings().isDevelopmentMode()) {
@@ -129,7 +156,19 @@ public class StreamRecorderRunnable implements Runnable {
             // However ffmpeg went away - clean exit, failed start, or crash - the recorder
             // feeding it must not stay behind
             stopPwRecord();
+            if (gobblers != null) {
+                // The readers end by themselves when the streams close; this only stops the pool
+                // from outliving the process it was reading
+                gobblers.shutdown();
+                gobblers = null;
+            }
         }
+    }
+
+    /** Called on a reader thread for every line ffmpeg writes, on either stream. */
+    private void publishOutputLine(String line) {
+        outputLines.add(line);
+        outputListener.run();
     }
 
     private void stopPwRecord() {
@@ -276,11 +315,8 @@ public class StreamRecorderRunnable implements Runnable {
                 }
                 filterCommand.append(";");
             } else if(i==2) {
-                //TODO: we add a delay to remove the echo
-
-                int audioDelayToRemoveEcho = audioDelay + enMixDelay;
                 //Here it's the english low level to mix with other languages than english
-                filterCommand.append(pickChannel(deviceNumber, audioInputsChannel.get(i-1), audioDelayToRemoveEcho))
+                filterCommand.append(pickChannel(deviceNumber, audioInputsChannel.get(i-1), audioDelay))
                         .append("[englishToBeMixed];");
                 //We new duplicate to use it in the different mixes
                 //The first 3 channel don't have the mix, because they are the prayers, the english to be mixed with the translation itself and the english
@@ -358,11 +394,19 @@ public class StreamRecorderRunnable implements Runnable {
         if(outputType==FILE_AND_URL) {
             finalCommand.add("-f");
             finalCommand.add("tee");
-            finalCommand.add("[f=mpegts:onfail=ignore]" + formatForFFmpegTee(outputDirectory + File.separatorChar + fileName) + " | [f=mpegts]"+ srtUrl);
+            // The two slaves fail in opposite directions, and both on purpose: a full disk
+            // must never take the stream down (ignore), but a lost SRT connection must kill
+            // the whole process - recordings included - so the operator relaunches at once.
+            // The abort has to be spelled out: despite what the tee documentation says its
+            // default, ffmpeg 8 shrugs a dead slave off with "continuing with 1/2 slaves"
+            // and keeps recording to a stream nobody is watching. With onfail=abort libsrt
+            // surfaces the loss in about a second when the far end closes, and in about six
+            // (its peer-idle timeout) when the network just vanishes.
+            finalCommand.add("[f=mpegts:onfail=ignore]" + formatForFFmpegTee(outputDirectory + File.separatorChar + fileName) + " | [f=mpegts:onfail=abort]"+ effectiveSrtUrl());
         } else if(outputType==FILE) {
             finalCommand.add(outputDirectory + File.separatorChar + fileName);
         } else {
-            finalCommand.add(srtUrl);
+            finalCommand.add(effectiveSrtUrl());
         }
 
         if (commRecording) {
@@ -437,7 +481,7 @@ public class StreamRecorderRunnable implements Runnable {
         command.add("-mpegts_flags");
         command.add("+initial_discontinuity");
         command.add("-mpegts_start_pid");
-        command.add(String.valueOf(videoPid));
+        command.add(String.valueOf(VIDEO_PID));
     }
 
     /**
@@ -458,7 +502,7 @@ public class StreamRecorderRunnable implements Runnable {
         String fileName = "recorded-video-communication-" + formattedDateTime + "-"
                 + displayResolution(commResolution) + ".mp4";
         String directory = commDirectory == null || commDirectory.isBlank() ? outputDirectory : commDirectory;
-        command.add("[f=mpegts:onfail=ignore:mpegts_flags=+initial_discontinuity:mpegts_start_pid=" + videoPid + "]"
+        command.add("[f=mpegts:onfail=ignore:mpegts_flags=+initial_discontinuity:mpegts_start_pid=" + VIDEO_PID + "]"
                 + formatForFFmpegTee(directory + File.separatorChar + fileName) + " | [f=null]-");
     }
 
@@ -683,6 +727,18 @@ public class StreamRecorderRunnable implements Runnable {
      * are channels 0 and 1, and on a mixer presenting all its inputs as one device the language
      * sits on its own numbered channel. Join keeps the first channel, as it always did.
      */
+    /**
+     * The URL as ffmpeg will see it. Resolved here rather than in the interface so the two sinks
+     * cannot drift apart, and so the command the Information tab shows is the command that runs -
+     * that tab is filled from this same builder.
+     */
+    private String effectiveSrtUrl() {
+        if (srtLatencyMillis == null || srtUrl == null || srtUrl.isBlank()) {
+            return srtUrl;
+        }
+        return withSrtLatency(srtUrl, srtLatencyMillis);
+    }
+
     private String pickChannel(int deviceNumber, String channel, int audioDelay) {
         return "[" + deviceNumber + ":a]pan=mono|c0=c" + SettingsUtil.audioChannelIndex(channel)
                 + ",adelay=" + audioDelay;
@@ -690,11 +746,17 @@ public class StreamRecorderRunnable implements Runnable {
 
 
     public void stop() {
+        stopRequested = true;
         closeAudioPipe();
         stopPwRecord();
         if (process != null) {
             destroyProcessAndChildren(process);
         }
+    }
+
+    /** Whether the last death of ffmpeg was asked for, as opposed to the stream being lost. */
+    public boolean wasStopRequested() {
+        return stopRequested;
     }
 
     public void initialiseAudioDevices(String[] deviceNames,String[] channelInfos,String[] noiseReductionVals) {
@@ -724,18 +786,18 @@ public class StreamRecorderRunnable implements Runnable {
             Thread.sleep(3000); // Wait for 5 seconds
         } catch (InterruptedException e) {
             logger.error("An error occurred", e);
-            outputLineProperty.setValue(e.toString());
+            publishOutputLine(e.toString());
         }
 
         processHandle.descendants().forEach(ph -> {
             if (ph.isAlive()) {
                 ph.destroyForcibly();
-                outputLineProperty.setValue("Stopping child process forcefully");
+                publishOutputLine("Stopping child process forcefully");
             }
         });
         if (process.isAlive()) {
             process.destroyForcibly();
-            outputLineProperty.setValue("Stopping parent process forcefully");
+            publishOutputLine("Stopping parent process forcefully");
         }
         if (monitor != null) {
             monitor.stopMonitoring();
@@ -745,8 +807,26 @@ public class StreamRecorderRunnable implements Runnable {
         this.srtUrl = url;
     }
 
-    public StringProperty getOutputLineProperty() {
-        return outputLineProperty;
+    /**
+     * The operator's latency override, or null to hand ffmpeg the URL byte for byte. Boxed rather
+     * than a sentinel: "no override" is a real state, and null says so without a magic number that
+     * a plausible millisecond value could one day collide with.
+     */
+    public void setSrtLatencyMillis(Integer srtLatencyMillis) {
+        this.srtLatencyMillis = srtLatencyMillis;
+    }
+
+    /** The lines ffmpeg has written and nobody has read yet; the GUI polls this until it is empty. */
+    public Queue<String> getOutputLines() {
+        return outputLines;
+    }
+
+    /**
+     * Set once, when the window is built, rather than per start: a listener added on every Start
+     * used to stay behind, so after three sessions every ffmpeg line reached the console three times.
+     */
+    public void setOutputListener(Runnable listener) {
+        outputListener = listener;
     }
 
     public BooleanProperty isAliveProperty() {
@@ -776,9 +856,6 @@ public class StreamRecorderRunnable implements Runnable {
         this.fps = fps;
     }
 
-    public void setVideoPid(int videoPid) {
-        this.videoPid = videoPid;
-    }
 
     public void setVideoBitrate(String videoBitrate) {
         this.videoBitrate = videoBitrate;
@@ -792,9 +869,6 @@ public class StreamRecorderRunnable implements Runnable {
         this.audioBufferSize = audioBufferSize;
     }
 
-    public void setEnMixDelay(int delay) {
-        enMixDelay = delay;
-    }
     public void setOutputType(int theOutputAFile) {
         outputType = theOutputAFile;
     }
@@ -855,6 +929,42 @@ public class StreamRecorderRunnable implements Runnable {
     /**
      * Formats a file path to a tee-compatible FFmpeg output path.
      */
+    /**
+     * The streaming URL with the operator's latency written into it, in the units libsrt wants.
+     * <p>
+     * ffmpeg does not read this URL as a URI. It takes everything after the first {@code ?} and
+     * hands it to av_find_info_tag, which knows two rules and no others: a value ends at the next
+     * {@code &} or at the end of the string, and the first parameter with a matching name wins.
+     * Both matter. The URL ends with {@code streamid=#!::r=...,password=...,m=publish}, a value
+     * full of {@code = : , # !} that anything parsing it as a URI would mangle - ffmpeg does not,
+     * which is why that URL has been streaming for years. And because the first match wins, an
+     * existing {@code latency=} has to be replaced where it stands: a second one appended at the
+     * end is read and thrown away. The name is matched at a token boundary only, because
+     * {@code peerlatency=} is a real SRT option and a plain search would find its tail.
+     * <p>
+     * The field is in milliseconds and {@code latency} is in microseconds, so it is multiplied by
+     * a thousand - the URL the festival streams with carries 2000000, which is two seconds.
+     */
+    public static String withSrtLatency(String url, int latencyMillis) {
+        String parameter = "latency=" + latencyMillis * 1000L;
+        int query = url.indexOf('?');
+        if (query < 0) {
+            return url + "?" + parameter;
+        }
+        for (int start = query + 1; start <= url.length(); ) {
+            int end = url.indexOf('&', start);
+            if (end < 0) {
+                end = url.length();
+            }
+            if (url.startsWith("latency=", start)) {
+                return url.substring(0, start) + parameter + url.substring(end);
+            }
+            start = end + 1;
+        }
+        // Nothing to replace, so add one - without doubling a separator the operator already typed
+        return url + (url.endsWith("?") || url.endsWith("&") ? "" : "&") + parameter;
+    }
+
     public static String formatForFFmpegTee(String path) {
         if (path == null || path.isEmpty()) {
             throw new IllegalArgumentException("Path cannot be null or empty.");

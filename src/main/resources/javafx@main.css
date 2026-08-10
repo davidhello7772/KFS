@@ -14,36 +14,153 @@
     -output-is-livestream-and-file-bg-color: #ffd4fb;
 }
 
-.bg-light-blue {
-  -fx-background-color: -output-is-file-bg-color;
+/* ==========================================================================
+   The output mode colours the window
+
+   One class on the scene root decides the colour of the whole window, so the operator can tell
+   from across the room whether this session is being recorded. The root is the only node that
+   paints it: every default that would otherwise cover it is made see-through below, which is how
+   the colour reaches the tab bodies, the advanced options and the footer instead of stopping at
+   the strip around the status bar.
+
+   -mode-color is deliberately not in the "*" block above: a colour declared there is redefined on
+   every node, and the descendants would then look up their own copy instead of the root's, which
+   is the whole point of it.
+   ========================================================================== */
+
+.window-shell {
+    /* Only ever seen if a shell is built without a mode class. Modena's own window grey, so a
+       mistake looks like the untinted mode rather than a white flash. */
+    -mode-color: -fx-background;
+    -fx-background-color: -mode-color;
 }
 
-.bg-livestreaming-and-record {
-  -fx-background-color: -output-is-livestream-and-file-bg-color;
+/* Livestreaming only is a mode like the others, not the absence of one: updateSceneStyle() adds and
+   removes all three the same way, and the neutral grey is stated here rather than being whatever
+   modena happens to leave behind. */
+.window-shell.mode-livestream {
+    -mode-color: -fx-background;
 }
 
-.bg-livestreaming-and-record .tab-pane .tab {
-    -fx-background-color: #f8c3fa;
+.window-shell.mode-record {
+    -mode-color: -output-is-file-bg-color;
 }
 
-.bg-livestreaming-and-record .tab-pane .tab-header-area .tab-header-background {
-     -fx-background-color: #ffd4fb;
+.window-shell.mode-livestream-and-record {
+    -mode-color: -output-is-livestream-and-file-bg-color;
 }
 
-.bg-light-blue .tab-pane .tab:selected {
-    -fx-background-color: -output-is-file-bg-color;
+/* The window scrolls as a whole, and modena paints both that scroll pane and its viewport with the
+   window grey - that pair, not the tab pane, is what used to stop the colour at the status bar.
+   The child combinator keeps this to the one scroll pane the shell owns: the console and the
+   information text area have scroll panes of their own. */
+.window-shell > .scroll-pane,
+.window-shell > .scroll-pane > .viewport,
+.window-shell > .scroll-pane > .corner {
+    -fx-background-color: transparent;
+    /* modena pads the pane by 1px to make room for a border it no longer draws */
+    -fx-padding: 0;
 }
 
-.bg-light-blue .tab-pane .tab {
-    -fx-background-color: #DCF3F9;
+/* Modena only paints the tab body for floating tab panes, so today this changes nothing. Written
+   down anyway: the chain from the root to the settings is only see-through if every link in it is. */
+.window-shell .tab-pane,
+.window-shell .tab-pane > .tab-content-area {
+    -fx-background-color: transparent;
 }
 
-.bg-light-blue .tab-pane .tab-header-area .tab-header-background {
-     -fx-background-color: #DCEBF9;
+/* The tab strip is part of the same surface: the strip and the tab being read take the mode colour,
+   and only the tabs the operator is not on step back a shade. Derived rather than picked by hand,
+   so a fourth mode is one colour and no new rules - the pair of hand-picked hexes per mode that
+   used to live here is what let an exact duplicate rule hide in this file. */
+.window-shell .tab-pane > .tab-header-area > .tab-header-background,
+.window-shell .tab-pane > .tab-header-area > .headers-region > .tab:selected {
+    -fx-background-color: -mode-color;
 }
 
-.bg-light-blue .tab-pane .tab:selected {
-    -fx-background-color: -output-is-file-bg-color;
+.window-shell .tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-background-color: derive(-mode-color, -6%);
+}
+
+/* The console reads as a log rather than as part of the settings: a plain light panel with a
+   monospace face, so ffmpeg's columns line up and the status line stays one line. It is built from
+   one row per line rather than from a text control, because only styled text can pick the warnings
+   and the errors out of a wall of ffmpeg chatter - a JavaFX text control paints all of its text in
+   one colour. The cost is that a selection is whole lines. */
+.console-scroll-pane,
+.console-scroll-pane > .viewport,
+.console-lines {
+    -fx-background-color: white;
+}
+
+.console-scroll-pane {
+    -fx-border-color: derive(-mode-color, -18%);
+    -fx-border-width: 1;
+}
+
+.console-lines {
+    -fx-padding: 3 4 3 4;
+}
+
+.console-line {
+    -fx-font-family: "DejaVu Sans Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11px;
+    -fx-padding: 0 2 0 2;
+}
+
+/* The severity classes carry the colour; the weight is set here so that only the console shouts -
+   the same classes label quiet things elsewhere in the window. */
+.console-line .warning-text,
+.console-line .danger-text,
+.console-line .primary-text {
+    -fx-font-weight: bold;
+}
+
+/* Ordinary ffmpeg chatter steps back a little so the marked lines carry further */
+.console-line .secondary-text {
+    -fx-fill: #6b7280;
+}
+
+.console-line:hover {
+    -fx-background-color: #f2f5f7;
+}
+
+/* A highlighter pen over the line rather than a repaint of it: the severity colours are the whole
+   point of this panel and have to survive being selected. */
+.console-line-selected,
+.console-line-selected:hover {
+    -fx-background-color: rgba(0, 150, 214, 0.28);
+}
+
+/* Only on screen while the log is running on underneath a console the operator has scrolled up in.
+   It floats over the bottom corner rather than taking a row of its own, so nothing moves when it
+   comes and goes. */
+.jump-to-latest {
+    -fx-background-color: -blue-color;
+    -fx-text-fill: white;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 12;
+    -fx-padding: 4 12 4 12;
+    -fx-cursor: hand;
+    -fx-opacity: 0.94;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.25), 6, 0, 0, 2);
+}
+
+.jump-to-latest:hover {
+    -fx-background-color: -blue-color-hover;
+    -fx-opacity: 1;
+}
+
+/* The one line of ffmpeg the compact view shows: the console's face on the console's paper, so the
+   window shrinks to the two things worth watching without looking like a different program. */
+.compact-status-line {
+    -fx-font-family: "DejaVu Sans Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 11px;
+    -fx-background-color: white;
+    -fx-border-color: derive(-mode-color, -18%);
+    -fx-border-width: 1;
+    -fx-padding: 3 6 3 6;
 }
 
 .event-button {

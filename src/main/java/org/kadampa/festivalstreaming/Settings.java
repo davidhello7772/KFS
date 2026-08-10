@@ -45,6 +45,7 @@ public class Settings implements Serializable {
     // Used when the settings file does not define any language
     public static final Language[] DEFAULT_CONFIGURABLE_LANGUAGES = {
             new Language("Spanish", "Español", "spa"),
+            new Language("Swedish", "Svenska", "swe"),
             new Language("French", "Français", "fra"),
             new Language("Portuguese", "Português", "por"),
             new Language("German", "Deutsch", "deu"),
@@ -83,10 +84,57 @@ public class Settings implements Serializable {
         LANGUAGES = result.toArray(new Language[0]);
     }
 
+    /** The three built-in languages, in the order they always occupy. */
+    public static List<Language> fixedLanguages() {
+        return List.of(FIXED_LANGUAGES);
+    }
+
     private static Language[] concat(Language[] first, Language[] second) {
         Language[] result = Arrays.copyOf(first, first.length + second.length);
         System.arraycopy(second, 0, result, first.length, second.length);
         return result;
+    }
+
+    /** The list the settings file should be written from: the edited one if there is one. */
+    public List<Language> effectiveLanguages() {
+        return pendingLanguages != null ? pendingLanguages : List.of(LANGUAGES);
+    }
+
+    public void setPendingLanguages(List<Language> languages) {
+        pendingLanguages = languages == null ? null : List.copyOf(languages);
+    }
+
+    /**
+     * Moves everything a language owns onto its new name. The four per-language maps are keyed by
+     * name, so a rename would otherwise leave the audio source, channel, colour and noise level
+     * behind under a name nothing refers to any more, and the language would come back after the
+     * restart with none of them - the settings that take longest to get right. Every read is taken
+     * before any write, so two languages swapping names each keep their own.
+     */
+    public void renameLanguages(Map<String, String> oldToNewNames) {
+        for (Map<String, String> perLanguage :
+                List.of(audioSources, audioSourcesChannel, noiseReductionLevel, languageColors)) {
+            Map<String, String> moved = new HashMap<>();
+            for (Map.Entry<String, String> rename : oldToNewNames.entrySet()) {
+                String value = perLanguage.remove(rename.getKey());
+                if (value != null) {
+                    moved.put(rename.getValue(), value);
+                }
+            }
+            perLanguage.putAll(moved);
+        }
+    }
+
+    /**
+     * Drops what a language owned once it has left the list. Nothing reads a dead key - the file is
+     * written from the language list, not from these maps - so this is housekeeping: it stops a
+     * session's worth of removals accumulating under names nothing refers to.
+     */
+    public void forgetLanguagesNotIn(Set<String> keptNames) {
+        for (Map<String, String> perLanguage :
+                List.of(audioSources, audioSourcesChannel, noiseReductionLevel, languageColors)) {
+            perLanguage.keySet().retainAll(keptNames);
+        }
     }
 
     public Settings() {
@@ -97,6 +145,15 @@ public class Settings implements Serializable {
     }
     @Serial
     private static final long serialVersionUID = 1L;
+    /**
+     * The language list to write to the settings file. Normally the one the application is running
+     * with, but the Languages tab edits a list that only takes effect at the next start: until then
+     * LANGUAGES has to stay exactly as it is, because every per-language control in the window - the
+     * audio source combos, the colour pickers, the level meters - was built from it and is indexed
+     * in lock-step with it. Having both Save buttons write through this is what stops the settings
+     * tab and the languages tab disagreeing about the list.
+     */
+    private transient List<Language> pendingLanguages;
     private final Map<String, String> audioSources = new HashMap<>();
     private final Map<String, String> audioSourcesChannel = new HashMap<>();
     private final Map<String, String> languageColors = new HashMap<>();
@@ -109,12 +166,10 @@ public class Settings implements Serializable {
     private String videoBitrate;
     private String videoBuffer;
     private String audioBuffer;
-    private String videoPID;
     private String delay;
     private String pixFormat;
     private String timeNeededToOpenADevice;
     private String srtDef;
-    private String fileDef;
     /** The extra file for the communication team: its own quality and destination. */
     private boolean commRecording = false;
     private String commResolution;
@@ -124,12 +179,15 @@ public class Settings implements Serializable {
     private String encoder;
     private String outputType;
     private String srtURL;
+    /** Whether to replace the latency inside the URL, and with what. Kept apart from srtURL so
+     *  what the operator pasted is what the file keeps, whatever the command ends up saying. */
+    private boolean srtLatencyOverride = false;
+    private String srtLatencyMs;
     private String outputDirectory;
     private String audioBitrate; // Add audio bitrate field
     /** The rate the capture devices run at and the recording is encoded at. */
     private String audioSampleRate = "48000";
     private String fps; // Add FPS field
-    private String enMixDelay;
     private boolean developmentMode = false;
     private double levelMeterWidthScale = 1.0;
     private double levelMeterHeightScale = 1.0;
@@ -184,13 +242,6 @@ public class Settings implements Serializable {
     public String getDelay() {
         return Objects.requireNonNullElse(delay, "0");
     }
-    public String getEnMixDelay() {
-        return Objects.requireNonNullElse(enMixDelay, "0");
-    }
-
-    public void setEnMixDelay(String delay) {
-        enMixDelay = delay;
-    }
 
     public void setDelay(String delay) {
         this.delay = delay;
@@ -220,13 +271,6 @@ public class Settings implements Serializable {
         this.srtDef = srtDef;
     }
 
-    public String getFileDef() {
-        return Objects.requireNonNullElse(fileDef, "");
-    }
-
-    public void setFileDef(String fileDef) {
-        this.fileDef = fileDef;
-    }
 
     public boolean isCommRecording() {
         return commRecording;
@@ -284,6 +328,23 @@ public class Settings implements Serializable {
         this.srtURL = srtURL;
     }
 
+    public boolean isSrtLatencyOverride() {
+        return srtLatencyOverride;
+    }
+
+    public void setSrtLatencyOverride(boolean srtLatencyOverride) {
+        this.srtLatencyOverride = srtLatencyOverride;
+    }
+
+    /** In milliseconds, unlike the latency= inside the URL, which libsrt reads as microseconds. */
+    public String getSrtLatencyMs() {
+        return Objects.requireNonNullElse(srtLatencyMs, "2000");
+    }
+
+    public void setSrtLatencyMs(String srtLatencyMs) {
+        this.srtLatencyMs = srtLatencyMs;
+    }
+
     public String getOutputDirectory() {
         return Objects.requireNonNullElse(outputDirectory, "");
     }
@@ -316,13 +377,6 @@ public class Settings implements Serializable {
         this.fps = fps;
     }
 
-    public String getVideoPID() {
-        return Objects.requireNonNullElse(videoPID, "");
-    }
-
-    public void setVideoPID(String videoPID) {
-        this.videoPID = videoPID;
-    }
 
     public void setVideoBitrate(String videoBitrate) {
         this.videoBitrate = videoBitrate;

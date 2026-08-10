@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.IntPredicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,29 @@ public class SettingsUtil {
     public static final String AUDIO_CHANNEL_RIGHT = "Right";
     public static final String AUDIO_CHANNEL_JOIN = "Join";
     public static final String AUDIO_SOURCE_NOT_USED = "Not Used";
+
+    /**
+     * The audio stream a language becomes, counting from zero, or -1 when it becomes none.
+     * <p>
+     * ffmpeg maps the languages that have a source, in list order, and only those; the mpegts muxer
+     * then hands out PIDs in that same order from mpegts_start_pid. So a language's track number
+     * and PID depend on how many languages above it are in use - which is why switching one off
+     * renumbers everything below it. The first two are never tracks: the prayers and the low-level
+     * English are mixed into the others rather than sent on their own. The caller says which
+     * positions are in use, so this can be asked about a list that is not live yet.
+     */
+    public static int audioTrackIndex(int languageIndex, IntPredicate isUsed) {
+        if (languageIndex < 2 || !isUsed.test(languageIndex)) {
+            return -1;
+        }
+        int track = 0;
+        for (int i = 2; i < languageIndex; i++) {
+            if (isUsed.test(i)) {
+                track++;
+            }
+        }
+        return track;
+    }
     public static final String AUDIO_SOURCE_NOT_SELECTED = "Not Selected";
     public static final String AUDIO_CHANNEL_STEREO = "Stereo";
     /** Prefix for the channels of a device with more than two inputs, e.g. "Ch 7" on a mixer. */
@@ -36,7 +60,8 @@ public class SettingsUtil {
     private static final int FORMAT_V1 = 1; // languages numbered from 1, settings keyed by language name
     private static final int FORMAT_V2 = 2; // one block per language, everything inside the block
     private static final int FIRST_CONFIGURABLE_BLOCK = 4; // blocks 1 to 3 are the built-in languages
-    private static final int MAX_LANGUAGES = 64;
+    /** The most languages a settings file may define; the Languages tab stops adding at this too. */
+    public static final int MAX_LANGUAGES = 64;
 
     /** Everything the file says about one language. The block number is only cosmetic: the
      *  settings are matched to a language by name, never by position. */
@@ -108,21 +133,20 @@ public class SettingsUtil {
         sortedProps.put("audioSampleRate", settings.getAudioSampleRate());
         sortedProps.put("audioBuffer", settings.getAudioBuffer());
         sortedProps.put("fps", settings.getFps());
-        sortedProps.put("videoPID", settings.getVideoPID());
         sortedProps.put("pixFormat", settings.getPixFormat());
         sortedProps.put("encoder", settings.getEncoder());
 
         // Group 2: Timing settings
         sortedProps.put("delay", settings.getDelay());
-        sortedProps.put("enMixDelay", settings.getEnMixDelay());
         sortedProps.put("timeNeededToOpenADevice", settings.getTimeNeededToOpenADevice());
 
         // Group 3: Output settings
         sortedProps.put("outputType", settings.getOutputType());
         sortedProps.put("srtURL", settings.getSrtURL());
+        sortedProps.put("srtLatencyOverride", String.valueOf(settings.isSrtLatencyOverride()));
+        sortedProps.put("srtLatencyMs", settings.getSrtLatencyMs());
         sortedProps.put("outputDirectory", settings.getOutputDirectory());
         sortedProps.put("srtDef", settings.getSrtDef());
-        sortedProps.put("fileDef", settings.getFileDef());
         sortedProps.put("commRecording", String.valueOf(settings.isCommRecording()));
         sortedProps.put("commResolution", settings.getCommResolution());
         sortedProps.put("commVideoBitrate", settings.getCommVideoBitrate());
@@ -156,15 +180,18 @@ public class SettingsUtil {
             // Write basic settings with section header
             writer.write("\n# === VIDEO AND AUDIO SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"videoSource", "videoInputMode", "videoBitrate", "videoBuffer", "audioBitrate", "audioSampleRate", "audioBuffer", "fps", "videoPID", "pixFormat", "encoder"});
+                new String[]{"videoSource", "videoInputMode", "videoBitrate", "videoBuffer", "audioBitrate", "audioSampleRate", "audioBuffer", "fps", "pixFormat", "encoder"});
 
             writer.write("\n# === TIMING SETTINGS ===\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"delay", "enMixDelay", "timeNeededToOpenADevice"});
+                new String[]{"delay", "timeNeededToOpenADevice"});
 
             writer.write("\n# === OUTPUT SETTINGS ===\n");
+            writer.write("# srtLatencyMs is in milliseconds. With srtLatencyOverride true it replaces the\n");
+            writer.write("# latency= inside srtURL - which libsrt reads in microseconds - as the command is\n");
+            writer.write("# built. srtURL itself is never rewritten.\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"outputType", "srtURL", "outputDirectory", "srtDef", "fileDef",
+                new String[]{"outputType", "srtURL", "srtLatencyOverride", "srtLatencyMs", "outputDirectory", "srtDef",
                     "commRecording", "commResolution", "commVideoBitrate", "commAudioBitrate", "commDirectory"});
 
             writer.write("\n# === SYSTEM SETTINGS ===\n");
@@ -185,8 +212,14 @@ public class SettingsUtil {
                     + " on, language.N.name / .nativeName / .code (ISO 639-2) define the streamable languages.\n");
             writer.write("# Deleting a block truncates the list at that point - renumber the blocks after it.\n");
             writer.write("# Everything about a language lives in its own block, so renaming one keeps its settings.\n");
-            for (int i = 0; i < Settings.LANGUAGES.length; i++) {
-                writeLanguageBlock(writer, i + 1, Settings.LANGUAGES[i], settings);
+            writer.write("# The Languages tab maintains these blocks; a hand edit is honoured and renumbered on the next save.\n");
+            // Not Settings.LANGUAGES: the Languages tab edits a list that only takes effect at the
+            // next start, and the running window must keep the old one. Numbering by position here
+            // is also what keeps the blocks contiguous when a language is removed - the reader stops
+            // at the first missing name, so a gap would silently drop everything after it.
+            List<Settings.Language> languages = languagesToWrite(settings);
+            for (int i = 0; i < languages.size(); i++) {
+                writeLanguageBlock(writer, i + 1, languages.get(i), settings);
             }
 
         } catch (IOException e) {
@@ -219,6 +252,25 @@ public class SettingsUtil {
         } catch (IOException e) {
             logger.warn("Could not back up {} before migrating it: {}", settingsFile, e.getMessage());
         }
+    }
+
+    /**
+     * The list to write, guarded. The writer decides "built in" from the block number alone, so a
+     * list that does not start with the three built-in languages would rename Prayers into whatever
+     * took block 1; rather than write that, fall back to the list the application is running with.
+     */
+    private static List<Settings.Language> languagesToWrite(Settings settings) {
+        List<Settings.Language> languages = settings.effectiveLanguages();
+        List<Settings.Language> fixed = Settings.fixedLanguages();
+        boolean startsWithBuiltIns = languages.size() >= fixed.size();
+        for (int i = 0; startsWithBuiltIns && i < fixed.size(); i++) {
+            startsWithBuiltIns = fixed.get(i).name().equals(languages.get(i).name());
+        }
+        if (!startsWithBuiltIns) {
+            logger.warn("The language list to save does not start with the built-in languages; keeping the running list");
+            return List.of(Settings.LANGUAGES);
+        }
+        return languages;
     }
 
     private static void writeLanguageBlock(OutputStreamWriter writer, int n, Settings.Language language, Settings settings) throws IOException {
@@ -391,13 +443,10 @@ public class SettingsUtil {
         settings.setVideoBitrate(props.getProperty("videoBitrate", ""));
         settings.setVideoBuffer(props.getProperty("videoBuffer", ""));
         settings.setAudioBuffer(props.getProperty("audioBuffer", ""));
-        settings.setVideoPID(props.getProperty("videoPID", ""));
         settings.setDelay(props.getProperty("delay", "0"));
-        settings.setEnMixDelay(props.getProperty("enMixDelay", "0"));
         settings.setPixFormat(props.getProperty("pixFormat", ""));
         settings.setTimeNeededToOpenADevice(props.getProperty("timeNeededToOpenADevice", "0"));
         settings.setSrtDef(props.getProperty("srtDef", ""));
-        settings.setFileDef(props.getProperty("fileDef", ""));
         settings.setCommRecording(Boolean.parseBoolean(props.getProperty("commRecording", "false")));
         settings.setCommResolution(props.getProperty("commResolution", "hd1080"));
         settings.setCommVideoBitrate(props.getProperty("commVideoBitrate", "5000k"));
@@ -406,6 +455,8 @@ public class SettingsUtil {
         settings.setEncoder(props.getProperty("encoder", ""));
         settings.setOutputType(props.getProperty("outputType", ""));
         settings.setSrtURL(props.getProperty("srtURL", ""));
+        settings.setSrtLatencyOverride(Boolean.parseBoolean(props.getProperty("srtLatencyOverride", "false")));
+        settings.setSrtLatencyMs(props.getProperty("srtLatencyMs", "2000"));
         settings.setOutputDirectory(props.getProperty("outputDirectory", ""));
         settings.setAudioBitrate(props.getProperty("audioBitrate", ""));
         settings.setAudioSampleRate(props.getProperty("audioSampleRate", "48000"));

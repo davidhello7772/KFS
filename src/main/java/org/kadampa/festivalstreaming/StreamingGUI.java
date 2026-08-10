@@ -2,6 +2,7 @@ package org.kadampa.festivalstreaming;
 
 import org.kadampa.festivalstreaming.linux.PulseAudioDevices;
 import org.kadampa.festivalstreaming.linux.V4l2Devices;
+import org.kadampa.festivalstreaming.linux.WindowAttention;
 import org.kadampa.festivalstreaming.macos.AvFoundationDevices;
 
 import com.github.sarxos.webcam.Webcam;
@@ -28,9 +29,10 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
-import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.*;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
@@ -55,11 +57,15 @@ import javax.sound.sampled.TargetDataLine;
 import java.io.File;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class StreamingGUI extends Application {
+    // The start of every main-window title, and the handle WindowAttention finds the window
+    // by - the GNOME .desktop entry matches on WM_CLASS instead, which is this class's name
+    private static final String WINDOW_TITLE_PREFIX = "Kadampa Festival";
     private static final String WAITING_TO_LIVESTREAM_AND_RECORD = "WAITING TO LIVESTREAM AND RECORD ON LOCAL MACHINE";
     private static final String WAITING_TO_RECORD = "WAITING TO RECORD ON LOCAL MACHINE";
     private static final String WAITING_TO_LIVESTREAM = "WAITING TO LIVESTREAM";
@@ -70,8 +76,6 @@ public class StreamingGUI extends Application {
     private final ComboBox<String>[] inputAudioSourcesChannel;
     private final ComboBox<String>[] inputNoiseReductionValues;
     private final Map<String, ColorPicker> languageColorPickers = new HashMap<>();
-    private final TextField inputVideoPid;
-    private final TextField inputenMixDelay;
     private final ComboBox<String> inputVideoSource;
     /** AVFoundation only opens a mode the device advertised, so macOS picks one explicitly. */
     private final ComboBox<String> inputVideoInputMode;
@@ -81,7 +85,6 @@ public class StreamingGUI extends Application {
     private final TextField inputSoundDelay;
     private final ComboBox<String> inputPixelFormat;
     private final ComboBox<String> inputSrtResolution;
-    private final ComboBox<String> inputOutputFileResolution;
     private final ComboBox<String> inputEncoder;
     private final ComboBox<String> inputChooseBetweenUrlOrFile;
     private final TextField inputSrtURL;
@@ -96,7 +99,26 @@ public class StreamingGUI extends Application {
     /** The rate the capture devices run at; the recording is encoded at the same rate. */
     private final ComboBox<String> inputAudioSampleRate;
     private final ComboBox<String> inputFramePerSecond;
-    private final TextFlow consoleOutputTextFlow;
+    /**
+     * The console: a read-only text area, monospace, on a plain light panel - a log the operator
+     * can drag a selection across and copy out of, exactly as they would from a terminal.
+     *
+     * <p>It used to be styled text, one colour per severity, which read well but could not be
+     * selected: a JavaFX Text node has no background to highlight, and setting its selection range
+     * paints nothing outside a text control (measured, not assumed). Colouring the whole line only
+     * bought line-at-a-time selection, which is not what anyone means by selectable. A text control
+     * can only paint one colour for all of its text, so severity is said in words at the head of
+     * the line instead - and the alarm, the orange status bar, the dock attention and the printed
+     * advice all say it far louder than red text ever did.
+     */
+    private final VBox consoleOutputBox = new VBox();
+    private ScrollPane consoleOutputScrollPane;
+    /** The row holding ffmpeg's status line, which the next report overwrites. */
+    private Node statusLineRow;
+    /** The rows the operator has picked out, in the order they appear. */
+    private final List<Node> selectedConsoleRows = new ArrayList<>();
+    /** Where a drag or a shift-click measures its range from. */
+    private Node consoleSelectionAnchor;
     private final Button startButton;
     private final Button stopButton;
     private final Button clearOutputButton;
@@ -105,17 +127,23 @@ public class StreamingGUI extends Application {
     private Thread encodingThread;
     private final StreamRecorderRunnable streamRecorder = new StreamRecorderRunnable(this);
     private final Settings settings;
-    private ScrollPane consoleOutputScrollPane;
     private final SVGPath stopPath = new SVGPath();
     private final TextArea textAreaInfo = new TextArea();
     private static final int WINDOW_WIDTH = 900;
     private static final int WINDOW_HEIGHT = 950;
+    /** Big enough for the pulsing words and most of an ffmpeg status line, and no bigger. */
+    private static final int COMPACT_WINDOW_WIDTH = 620;
+    private static final int COMPACT_WINDOW_HEIGHT = 130;
     private static final double TOOLTIP_DELAY = 0.2;
     private static final int TOOLTIP_DURATION=10;
     private static final double LABEL_PREF_WIDTH = 150;
     private final Timeline blinkingTimeLine;
-    private boolean manualScroll = false;
-    private boolean doWeAutomaticallyScrollAtBottom = true;
+    private final BooleanProperty followingConsoleTail = new SimpleBooleanProperty(true);
+    /** How far down the console was when it last put itself at the bottom. */
+    /** Set while the console scrolls itself, so its own move is not read as the operator's. */
+    private boolean scrollingConsoleToTail;
+    /** How close to the bottom still counts as the bottom - a scroll bar never lands exactly on 1. */
+    private static final double CONSOLE_AT_BOTTOM_EPSILON = 0.001;
     private final Label videoPID = new Label("");
     private final List<Label> audioPidLabels = new ArrayList<>();
     private final Label nowPlayingLabel = new Label("");
@@ -127,6 +155,13 @@ public class StreamingGUI extends Application {
     private final BooleanProperty devicesRefreshing = new SimpleBooleanProperty(false);
     private final BooleanProperty isTheOutputAURL = new SimpleBooleanProperty();
     private final BooleanProperty isTheOutputFileAndUrl = new SimpleBooleanProperty();
+    /**
+     * True while the languages are spread over more than one audio device. The time needed to open
+     * a device only shifts the command from the second device onwards, so with everything on one
+     * mixer - which is every Mac, and this festival's Linux rig - the field is not merely unused,
+     * it invites a value that will do nothing. It is hidden until it applies.
+     */
+    private final BooleanProperty severalAudioDevices = new SimpleBooleanProperty(false);
     private LevelMeterPanel vuMeterPanel;
     private VolumeMonitor volumeMonitor;
 
@@ -136,19 +171,55 @@ public class StreamingGUI extends Application {
     private final TextField playerURLTextField = new TextField();
     private final HBox outputFileHBox = new HBox();
     private final HBox outputUrlHBox = new HBox();
+    /** Optional: replace the latency the pasted URL carries, without ever editing the URL itself. */
+    private final CheckBox inputSrtLatencyOverride = new CheckBox("Override the latency in the URL:");
+    private final TextField inputSrtLatencyMillis = new TextField();
+    private final HBox srtLatencyHBox = new HBox();
     private Scene scene;
     private Tab controlConsoleTab;
-    private ScrollPane mainScrollPane;
     private Stage primaryStage;
+    private LanguagesTab languagesTab;
+    /** The scene root: the mode colour lives on it, so compact mode swaps what is inside it. */
+    private BorderPane shell;
+    /** The whole interface, kept alive while the compact view is up so the log survives it. */
+    private Region fullContent;
+    private Node footer;
+    private VBox compactView;
+    /** The row under the pulsing bar in the compact view. */
+    private HBox compactStatusRow;
+    /** The VBox holding the status bar and the tabs, so the bar can be lent to the compact view. */
+    private VBox windowRoot;
+    private Button compactButton;
+    private final Label compactStatusLine = new Label();
+    private boolean compactMode;
+    /** The window as it was before it shrank, to put back exactly. */
+    private double fullWidth;
+    private double fullHeight;
+    private boolean wasAlwaysOnTop;
+    /** Whether the status bar is currently saying "in progress" rather than "waiting". */
+    private boolean showingInProgressText;
     private final Image iconLiveStreamIdle = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/live-streaming.png")));
     private final Image iconLiveStreamPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/live-streaming-playing.jpg")));
     private final Image iconRecordingIdle = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-idle.png")));
     private final Image iconRecordingPlaying = new Image(Objects.requireNonNull(getClass().getResourceAsStream("/recording-playing.jpg")));
+    /** The style class the scene root carries so the stylesheet knows which window this is. */
+    private static final String WINDOW_SHELL = "window-shell";
+    // The three output modes as the stylesheet knows them. Whole class names rather than a prefix
+    // plus a suffix, so a colour can be traced from the Java to the CSS with a single grep.
+    private static final String MODE_LIVESTREAM = "mode-livestream";
+    private static final String MODE_RECORD = "mode-record";
+    private static final String MODE_LIVESTREAM_AND_RECORD = "mode-livestream-and-record";
+    private static final List<String> MODE_STYLE_CLASSES =
+            List.of(MODE_LIVESTREAM, MODE_RECORD, MODE_LIVESTREAM_AND_RECORD);
     // Keep in sync with -green-color / -orange-color in javafx@main.css
     private static final Color LIVE_GREEN = Color.web("#22C55E");
     private static final Color ERROR_ORANGE = Color.web("#EE7130");
     private static final long ERROR_COLOUR_HOLD_MS = 3000;
     private static final int MAX_PLAUSIBLE_DEVICE_OPEN_MS = 10000;
+    /** The believable range for the stream latency, in milliseconds. The festival runs at 2000, and
+     *  the mistake this catches is pasting the URL's microsecond figure into a millisecond field. */
+    private static final int MIN_PLAUSIBLE_SRT_LATENCY_MS = 20;
+    private static final int MAX_PLAUSIBLE_SRT_LATENCY_MS = 10000;
     private final DoubleProperty barPulse = new SimpleDoubleProperty(1.0);
     /** The delayed return to the idle look after a stream ends; cancelled by a new start. */
     private PauseTransition pendingIdleReset;
@@ -156,7 +227,24 @@ public class StreamingGUI extends Application {
     private long lastErrorMillis = 0;
     private long firstOpeningDeviceStartupTime = 0;
     private long secondOpeningDeviceStartupTime = 0;
-    private boolean playingError;
+    /** Read and written from the alarm thread as well as the FX one, so the check has to be atomic. */
+    private final AtomicBoolean playingError = new AtomicBoolean();
+    /** Reads the health of the stream out of ffmpeg's status line. */
+    private final StreamHealth streamHealth = new StreamHealth();
+    /** The live "30 fps · 1.00x" beside the status text, so a fault shows without opening a tab. */
+    private final Label statusReadout = new Label();
+    /**
+     * A capture fault that will not clear on its own, so the window must not quietly return to a
+     * healthy green three seconds later the way it does after a passing error.
+     */
+    private boolean videoFaultLatched;
+    /** The nodes making up the status line currently at the foot of the console. */
+    /** Set while a drain is already on its way to the FX thread, so a batch is asked for once. */
+    private final AtomicBoolean consoleDrainScheduled = new AtomicBoolean();
+    /** Set while a layout repair is already on its way; see repairWindowLayoutLater. */
+    private final AtomicBoolean layoutRepairQueued = new AtomicBoolean();
+    private static final List<String> SEVERITY_STYLE_CLASSES =
+            List.of("secondary-text", "primary-text", "warning-text", "danger-text");
     /** The format the camera delivers frames in, discovered when the video source is chosen. */
     private String videoInputPixelFormat;
     private static final Logger logger = LoggerFactory.getLogger(StreamingGUI.class);
@@ -178,15 +266,12 @@ public class StreamingGUI extends Application {
             inputAudioSources[i] = new ComboBox<>();
             inputAudioSourcesChannel[i] = new ComboBox<>();
             inputNoiseReductionValues[i] = new ComboBox<>();
+            // Any language moving to another device can change the answer, including the moves
+            // applySettings makes for itself when the window opens
+            inputAudioSources[i].valueProperty().addListener((observable, oldValue, newValue) ->
+                    severalAudioDevices.set(selectedAudioDevices().size() > 1));
         }
-        playingError = false;
         inputVideoSource = new ComboBox<>();
-        inputVideoPid = new TextField();
-        inputVideoPid.setText("37");
-        inputVideoPid.setMaxWidth(75);
-        inputenMixDelay = new TextField();
-        inputenMixDelay.setText("0");
-        inputenMixDelay.setMaxWidth(75);
         inputSoundDelay = new TextField();
         inputSoundDelay.setText("0");
         inputAudioBitrate = new ComboBox<>();
@@ -255,7 +340,6 @@ public class StreamingGUI extends Application {
         inputCommAudioBitrate.getItems().addAll(inputAudioBitrate.getItems());
         inputCommDirectory = new TextField();
 
-        inputOutputFileResolution = new ComboBox<>();
         inputEncoder = new ComboBox<>();
         // The hardware encoder depends on the machine: NVENC on the Windows streaming PC,
         // VideoToolbox on a Mac. Only what this ffmpeg build actually has is offered.
@@ -269,27 +353,37 @@ public class StreamingGUI extends Application {
         inputChooseBetweenUrlOrFile.getItems().add("Livestream And File");
 
 
+        // The three flags are set one after the other, and each one fires its own listeners as it
+        // goes. Restyling from those listeners therefore ran twice per change and read a state that
+        // was still half updated - which is how switching from "Livestream And File" to "File" used
+        // to leave the window in the livestream colours. The look is settled here instead, once,
+        // after all three agree.
         inputChooseBetweenUrlOrFile.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
             isTheOutputFileAndUrl.setValue(newValue.equals("Livestream And File"));
             isTheOutputAFile.setValue(newValue.equals("Livestream And File") || newValue.equals("File"));
             isTheOutputAURL.setValue(newValue.equals("Livestream And File") || newValue.equals("Srt URL (livestream)"));
+            // The combo is built before the window is: the first settings load styles the scene itself
+            if (scene != null) {
+                applyStyleOnOutputTypeChange();
+            }
             }
         );
-
-        isTheOutputFileAndUrl.addListener((observable, oldValue, newValue) -> {
-            if(controlConsoleTab!=null) {
-                applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),newValue);}});
-
-        isTheOutputAFile.addListener((observable, oldValue, newValue) -> {
-            if(controlConsoleTab!=null) {
-                applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),newValue);}});
 
         inputTimeNeededToOpenADevice = new TextField();
         inputSrtURL = new TextField();
         inputOutputDirectory = new TextField();
         outputFileHBox.visibleProperty().bind(isTheOutputAFile);
         outputUrlHBox.visibleProperty().bind(isTheOutputAURL);
-        consoleOutputTextFlow = new TextFlow();
+        // Hidden and out of the layout, not merely invisible: on its own, visible leaves the row
+        // holding its full height and the settings keep a blank gap where the other output used to be
+        outputFileHBox.managedProperty().bind(outputFileHBox.visibleProperty());
+        outputUrlHBox.managedProperty().bind(outputUrlHBox.visibleProperty());
+        srtLatencyHBox.visibleProperty().bind(isTheOutputAURL);
+        srtLatencyHBox.managedProperty().bind(srtLatencyHBox.visibleProperty());
+        // The number only means anything while the override is asked for, exactly as the
+        // communication recording's fields follow its checkbox
+        inputSrtLatencyMillis.setMaxWidth(75);
+        inputSrtLatencyMillis.disableProperty().bind(inputSrtLatencyOverride.selectedProperty().not());
         //consoleOutputTextArea = new TextArea();
         startButton = new Button("Start");
         startButton.getStyleClass().add("event-button");
@@ -349,13 +443,13 @@ public class StreamingGUI extends Application {
         // Add action listeners
         startButton.setOnAction(event -> {
             try {
-                consoleOutputTextFlow.getChildren().clear();
+                clearConsole();
                 startEncodingThread();
             } catch (Exception e) {
                 if (Settings.DEVELOPMENT_MODE) {
                     throw new RuntimeException(e);
                 } else {
-                    Platform.runLater(()->appendToConsole(e.toString(),"",Color.RED));
+                    Platform.runLater(()->appendToConsole(e.toString(), ConsoleSeverity.ERROR));
                 }
             }
         });
@@ -373,6 +467,9 @@ public class StreamingGUI extends Application {
         });
 
         stopButton.setOnAction(event -> {
+            if (!confirm("Stop now?", whatStopEnds(), "Stop")) {
+                return;
+            }
             stopButton.setGraphic(progressIndicator);
             // Create a Task to run the long-running method in the background
             Task<Void> task = new Task<>() {
@@ -402,7 +499,7 @@ public class StreamingGUI extends Application {
         });
 
         //clearOutputButton.setOnAction((ActionEvent e) ->consoleOutputTextArea.getChildren().clear());
-        clearOutputButton.setOnAction((ActionEvent e) -> consoleOutputTextFlow.getChildren().clear());
+        clearOutputButton.setOnAction((ActionEvent e) -> clearConsole());
 
 
         List<String> audioDeviceNames = audioDeviceNames();
@@ -678,7 +775,11 @@ public class StreamingGUI extends Application {
 
     private String defaultVideoInputMode(List<String> modes) {
         int frameRate = parseIntOrDefault(inputFramePerSecond.getValue(), 30);
-        String resolution = isTheOutputAFile.get() ? inputOutputFileResolution.getValue() : inputSrtResolution.getValue();
+        // Whatever the output type, everything is encoded at the one output resolution - the URL,
+        // the recording and both together all come from setOutputResolution. This used to consult a
+        // per-file resolution that had no items and no place in the window, so it was always null
+        // and the switch below always fell through to 720.
+        String resolution = inputSrtResolution.getValue();
         int height = switch (resolution == null ? "" : resolution) {
             case "hd480" -> 480;
             case "hd1080" -> 1080;
@@ -705,6 +806,22 @@ public class StreamingGUI extends Application {
      * means the device has to be one Java Sound can open, and only one of them can be used: the
      * samples travel down ffmpeg's standard input and there is only one of those.
      */
+    /**
+     * The distinct audio devices the languages are reading from. Both platform checks below asked
+     * this question in identical words, and so does the interface: the time needed to open a device
+     * only means anything once there is more than one of them.
+     */
+    private Set<String> selectedAudioDevices() {
+        Set<String> devices = new LinkedHashSet<>();
+        for (ComboBox<String> audioInput : inputAudioSources) {
+            String deviceName = audioInput.getValue();
+            if (deviceName != null && !SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName) && !deviceName.isBlank()) {
+                devices.add(deviceName);
+            }
+        }
+        return devices;
+    }
+
     private boolean checkAudioSampleRates() {
         if (Host.isLinux()) {
             return checkLinuxAudioSources();
@@ -713,17 +830,10 @@ public class StreamingGUI extends Application {
             return true;  // ffmpeg opens the devices itself through DirectShow
         }
         boolean result = true;
-        Set<String> devices = new LinkedHashSet<>();
-        for (ComboBox<String> audioInput : inputAudioSources) {
-            String deviceName = audioInput.getValue();
-            if (deviceName != null && !SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName) && !deviceName.isBlank()) {
-                devices.add(deviceName);
-            }
-        }
+        Set<String> devices = selectedAudioDevices();
         for (String deviceName : devices) {
             if (AudioCaptureManager.findCaptureDevice(deviceName) == null) {
-                appendToConsole("The audio device \"" + deviceName + "\" cannot be opened for recording.",
-                        "", Color.RED);
+                appendToConsole("The audio device \"" + deviceName + "\" cannot be opened for recording.", ConsoleSeverity.ERROR);
                 result = false;
             }
         }
@@ -731,7 +841,7 @@ public class StreamingGUI extends Application {
             appendToConsole("All the languages have to come from a single audio device on this machine, but "
                     + devices.size() + " are selected: " + String.join(", ", devices)
                     + ". A mixer presents all of its inputs as one device, so choose the same one for every language"
-                    + " and give each language its own channel.", "", Color.RED);
+                    + " and give each language its own channel.", ConsoleSeverity.ERROR);
             result = false;
         }
         return result;
@@ -743,18 +853,11 @@ public class StreamingGUI extends Application {
      */
     private boolean checkLinuxAudioSources() {
         boolean result = true;
-        Set<String> devices = new LinkedHashSet<>();
-        for (ComboBox<String> audioInput : inputAudioSources) {
-            String deviceName = audioInput.getValue();
-            if (deviceName != null && !SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(deviceName) && !deviceName.isBlank()) {
-                devices.add(deviceName);
-            }
-        }
+        Set<String> devices = selectedAudioDevices();
         int multiChannelDevices = 0;
         for (String deviceName : devices) {
             if (!PulseAudioDevices.exists(settings.getFfmpegPath(), deviceName)) {
-                appendToConsole("The audio device \"" + deviceName + "\" is not connected any more.",
-                        "", Color.RED);
+                appendToConsole("The audio device \"" + deviceName + "\" is not connected any more.", ConsoleSeverity.ERROR);
                 result = false;
                 continue;
             }
@@ -767,8 +870,7 @@ public class StreamingGUI extends Application {
         if (multiChannelDevices > 1) {
             appendToConsole("Only one device with more than 8 channels can be used on this machine, but "
                     + multiChannelDevices + " are selected. A mixer presents all of its inputs as one device,"
-                    + " so choose the same one for every language and give each language its own channel.",
-                    "", Color.RED);
+                    + " so choose the same one for every language and give each language its own channel.", ConsoleSeverity.ERROR);
             result = false;
         }
         return result;
@@ -785,20 +887,26 @@ public class StreamingGUI extends Application {
         }
     }
 
-    private void applyStyleOnOutputTypeChange(Boolean isOutputLiveStreamAndFile, Boolean isOutputAFile) {
-        if(isOutputLiveStreamAndFile) {
-            updateSceneStyle("livestreaming-and-record");
-            primaryStage.setTitle("Kadampa Festival - Livestreaming and Recording the session");
+    /**
+     * The whole look of the window follows the output type. It takes no arguments on purpose: the
+     * mode is read from the same three flags {@link #waitingText()} and {@link #stateIcon} read, so
+     * a caller cannot hand it a stale or half-updated answer - which is exactly what went wrong
+     * while two listeners each passed their own new value in.
+     */
+    private void applyStyleOnOutputTypeChange() {
+        if(isTheOutputFileAndUrl.get()) {
+            updateSceneStyle(MODE_LIVESTREAM_AND_RECORD);
+            primaryStage.setTitle(WINDOW_TITLE_PREFIX + " - Livestreaming and Recording the session");
         }
-        else if(isOutputAFile) {
-            updateSceneStyle("light-blue");
-            primaryStage.setTitle("Kadampa Festival - Recording the session");
+        else if(isTheOutputAFile.get()) {
+            updateSceneStyle(MODE_RECORD);
+            primaryStage.setTitle(WINDOW_TITLE_PREFIX + " - Recording the session");
         }
         else {
-            updateSceneStyle("livestream");
-            primaryStage.setTitle("Kadampa Festival - Live stream the session");
+            updateSceneStyle(MODE_LIVESTREAM);
+            primaryStage.setTitle(WINDOW_TITLE_PREFIX + " - Live stream the session");
         }
-        currentInformationTextProperty.setValue(waitingText());
+        setStatusText(false);
         primaryStage.getIcons().setAll(stateIcon(false));
     }
 
@@ -807,6 +915,29 @@ public class StreamingGUI extends Application {
      * also makes isTheOutputAFile true. Everything therefore reads the mode from here, so the three
      * modes cannot disagree between waiting, running and stopped.
      */
+    /**
+     * Puts the right words in the status bar for the state, in the length the window has room for.
+     * One place, because the compact view says the same thing in three characters and two sources
+     * of the same sentence drift apart.
+     */
+    private void setStatusText(boolean inProgress) {
+        showingInProgressText = inProgress;
+        refreshStatusText();
+    }
+
+    private void refreshStatusText() {
+        currentInformationTextProperty.setValue(compactMode
+                ? compactStatusText()
+                : (showingInProgressText ? inProgressText() : waitingText()));
+    }
+
+    /** The same state in a handful of characters, for a bar a few hundred pixels wide. */
+    private String compactStatusText() {
+        String what = isTheOutputFileAndUrl.get() ? "LIVE + REC"
+                : isTheOutputAFile.get() ? "REC" : "LIVE";
+        return showingInProgressText ? what : "READY " + what;
+    }
+
     private String waitingText() {
         if (isTheOutputFileAndUrl.get()) {
             return WAITING_TO_LIVESTREAM_AND_RECORD;
@@ -830,19 +961,21 @@ public class StreamingGUI extends Application {
     }
 
 
-    private void updateSceneStyle(String color) {
-        // Update root style
-        //make sure the color style is define in the css
-        mainScrollPane.getStyleClass().removeAll("bg-light-blue");
-        mainScrollPane.getStyleClass().removeAll("bg-livestreaming-and-record");
-        mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().removeAll("bg-light-blue"));
-        mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().removeAll("bg-livestreaming-and-record"));
-
-        if(!("".equals(color))) {
-            mainScrollPane.getStyleClass().add("bg-" + color);
-            // Update styles of the children
-            mainScrollPane.getChildrenUnmodifiable().forEach(child -> child.getStyleClass().add("bg-" + color));
-        }
+    /**
+     * The mode colours the whole window, so its class goes on the scene root: the status bar, the
+     * three tab bodies, the advanced options and the footer are all descendants of it, and one
+     * add/remove therefore repaints the lot. Everything between the root and the operator is made
+     * see-through in the stylesheet, which is why nothing here reaches into the scroll pane's skin
+     * any more - that loop only ever found the viewport and the scroll bars, so the colour stopped
+     * wherever a control painted a background of its own, and the footer, a sibling of the scroll
+     * pane, could never be reached at all.
+     */
+    private void updateSceneStyle(String modeStyleClass) {
+        List<String> rootStyleClasses = scene.getRoot().getStyleClass();
+        // All three, including the one being set: re-applying the current mode - every settings load
+        // does - would otherwise add the same class again and again for the life of the session
+        rootStyleClasses.removeAll(MODE_STYLE_CLASSES);
+        rootStyleClasses.add(modeStyleClass);
     }
 
     // Updated applySettings() method in StreamingGUI.java
@@ -890,7 +1023,6 @@ public class StreamingGUI extends Application {
         }
 
         // Rest of the method remains unchanged...
-        inputenMixDelay.setText(settings.getEnMixDelay());
         if (!settings.getVideoSource().isEmpty()) {
             inputVideoSource.setValue(settings.getVideoSource());
         }
@@ -902,12 +1034,10 @@ public class StreamingGUI extends Application {
         inputVideoSourceBuffer.setValue(settings.getVideoBuffer());
         inputAudioSourceBuffer.setValue(settings.getAudioBuffer());
         inputVideoBitrate.setValue(settings.getVideoBitrate());
-        inputVideoPid.setText(settings.getVideoPID());
         inputSoundDelay.setText(settings.getDelay());
         inputPixelFormat.setValue(settings.getPixFormat());
         inputChooseBetweenUrlOrFile.setValue(settings.getOutputType());
         inputSrtResolution.setValue(settings.getSrtDef());
-        inputOutputFileResolution.setValue(settings.getFileDef());
         // The saved encoder may belong to the other machine, NVENC needing a card no Mac has
         String savedEncoder = settings.getEncoder();
         // A file from before the preset choice says a bare "libx264": its first preset entry
@@ -925,10 +1055,12 @@ public class StreamingGUI extends Application {
             inputEncoder.setValue(inputEncoder.getItems().get(0));
             if (!settings.getEncoder().isEmpty()) {
                 appendToConsole("The encoder " + settings.getEncoder() + " is not available on this machine. Using "
-                        + inputEncoder.getValue() + " instead.", "", ERROR_ORANGE);
+                        + inputEncoder.getValue() + " instead.", ConsoleSeverity.WARNING);
             }
         }
         inputSrtURL.setText(settings.getSrtURL());
+        inputSrtLatencyOverride.setSelected(settings.isSrtLatencyOverride());
+        inputSrtLatencyMillis.setText(settings.getSrtLatencyMs());
         inputTimeNeededToOpenADevice.setText(settings.getTimeNeededToOpenADevice());
         inputOutputDirectory.setText(outputDirectoryForThisMachine());
         inputAudioBitrate.setValue(settings.getAudioBitrate());
@@ -953,7 +1085,21 @@ public class StreamingGUI extends Application {
     }
 
     // Updated saveSettings() method in StreamingGUI.java
+    /**
+     * The one writer of the settings file, whichever tab's Save was pressed. The order matters: the
+     * sweep below keys the per-language maps by the names in Settings.LANGUAGES, which are still the
+     * ones the window started with, so the Languages tab's renames have to be applied after it or
+     * they would be written straight back.
+     */
     private void saveSettings() {
+        collectSettingsFromControls();
+        if (languagesTab != null) {
+            languagesTab.applyPendingLanguageEdits();
+        }
+        SettingsUtil.saveSettings(settings, "settings");
+    }
+
+    private void collectSettingsFromControls() {
         for (int i = 0; i < inputAudioSources.length; i++) {
             String languageName = Settings.LANGUAGES[i].name();
             settings.getAudioSources().put(languageName, inputAudioSources[i].getValue());
@@ -970,20 +1116,19 @@ public class StreamingGUI extends Application {
         }
 
         // Rest of the method remains unchanged...
-        settings.setEnMixDelay((inputenMixDelay.getText()));
         settings.setVideoSource(inputVideoSource.getValue());
         settings.setVideoInputMode(inputVideoInputMode.getValue());
         settings.setVideoBitrate(inputVideoBitrate.getValue());
         settings.setAudioBuffer(inputAudioSourceBuffer.getValue());
         settings.setVideoBuffer(inputVideoSourceBuffer.getValue());
-        settings.setVideoPID(inputVideoPid.getText());
         settings.setDelay(inputSoundDelay.getText());
         settings.setPixFormat(inputPixelFormat.getValue());
         settings.setOutputType(inputChooseBetweenUrlOrFile.getValue());
         settings.setSrtDef(inputSrtResolution.getValue());
-        settings.setFileDef(inputOutputFileResolution.getValue());
         settings.setEncoder(inputEncoder.getValue());
         settings.setSrtURL(inputSrtURL.getText());
+        settings.setSrtLatencyOverride(inputSrtLatencyOverride.isSelected());
+        settings.setSrtLatencyMs(inputSrtLatencyMillis.getText());
         settings.setTimeNeededToOpenADevice(inputTimeNeededToOpenADevice.getText());
         settings.setOutputDirectory(inputOutputDirectory.getText());
         settings.setAudioBitrate(inputAudioBitrate.getValue());
@@ -997,7 +1142,6 @@ public class StreamingGUI extends Application {
         for (Map.Entry<String, ColorPicker> entry : languageColorPickers.entrySet()) {
             settings.getLanguageColors().put(entry.getKey(), entry.getValue().getValue().toString());
         }
-        SettingsUtil.saveSettings(settings, "settings");
     }
 
     /**
@@ -1018,6 +1162,7 @@ public class StreamingGUI extends Application {
 
     private ScrollPane buildUI() {
         VBox root = new VBox();
+        windowRoot = root;
         // The logo lives in the status bar: the title row it used to share with the application
         // name is gone, which gives its whole height back to the tabs
         ImageView logoView = new ImageView(new Image("https://kadampafestivals.org/wp-content/uploads/2024/01/New-NKT-IKBU-Logo-Kadampa-Blue.png"));
@@ -1026,14 +1171,23 @@ public class StreamingGUI extends Application {
         logoView.setPreserveRatio(true);
 
         nowPlayingLabel.textProperty().bind(currentInformationTextProperty);
-        nowPlayingLabel.setStyle("-fx-font-size: 24px;");
+        // See repairWindowLayoutLater: anything that resizes inside this bar can strand the
+        // window's layout, and every writer into it has to ask for the repair
+        currentInformationTextProperty.addListener(
+                (observable, oldText, newText) -> repairWindowLayoutLater());
+        statusReadout.textProperty().addListener(
+                (observable, oldText, newText) -> repairWindowLayoutLater());
 
-        nowPlayingBox.getChildren().setAll(logoView, liveDot, nowPlayingLabel);
+        nowPlayingBox.getChildren().setAll(logoView, liveDot, nowPlayingLabel, statusReadout);
         nowPlayingBox.setSpacing(14);
         nowPlayingBox.setMinHeight(50);
         nowPlayingBox.setMaxHeight(50);
         nowPlayingBox.setMinWidth(WINDOW_WIDTH-5);
         nowPlayingBox.setAlignment(Pos.CENTER);
+
+        // Subscribed once, for the life of the window: adding this on every Start left the previous
+        // one behind, so after three sessions every ffmpeg line reached the console three times
+        streamRecorder.setOutputListener(this::scheduleConsoleDrain);
 
         TabPane tabPane = new TabPane();
         tabPane.setPrefWidth(WINDOW_WIDTH-2);
@@ -1057,6 +1211,18 @@ public class StreamingGUI extends Application {
         tabPane.getTabs().add(settingTab);
 
 
+        // Between Settings and Information on purpose: the settings are touched every session, the
+        // language list once per festival, and the Information tab is reference material
+        languagesTab = new LanguagesTab(settings, inputAudioSources, inputAudioSourcesChannel,
+                streamRecorder.isAliveProperty(), this::saveSettings);
+        Tab languageTab = new Tab("Languages");
+        languageTab.setClosable(false);
+        ScrollPane languagesScrollPane = new ScrollPane(languagesTab.buildContent());
+        languagesScrollPane.setFitToWidth(true);
+        languagesScrollPane.getStyleClass().add("settings-scroll-pane");
+        languageTab.setContent(languagesScrollPane);
+        tabPane.getTabs().add(languageTab);
+
         Tab infoTab = new Tab("Information");
         infoTab.setClosable(false);
         infoTab.setContent(buildTabInfo());
@@ -1064,12 +1230,20 @@ public class StreamingGUI extends Application {
 
 
         root.getChildren().addAll(nowPlayingBox,tabPane);
+        // The tabs take whatever height the status bar leaves, instead of the window taking
+        // whatever height the tabs ask for. That direction is what lets the settings tab's own
+        // scroll pane do the scrolling when the advanced options are unfolded, rather than the
+        // whole window growing taller than the screen underneath a stale scroll position.
+        VBox.setVgrow(tabPane, Priority.ALWAYS);
 
-        mainScrollPane = new ScrollPane(root);
+        ScrollPane mainScrollPane = new ScrollPane(root);
         // Let the content take the width of the viewport rather than its own preferred width:
         // the two are within a few pixels of each other, which was enough to raise a horizontal
         // scroll bar with nothing worth scrolling to
         mainScrollPane.setFitToWidth(true);
+        // Same for the height, so this pane only takes over when the window is dragged smaller
+        // than the console tab's fixed panel really needs
+        mainScrollPane.setFitToHeight(true);
         return mainScrollPane;
     }
 
@@ -1120,33 +1294,168 @@ public class StreamingGUI extends Application {
     }
 
     private void displayPIDInfo() {
-        int pidVideo = Integer.parseInt(inputVideoPid.getText());
+        int pidVideo = StreamRecorderRunnable.VIDEO_PID;
         videoPID.setText("PID Video: " + pidVideo);
-        int currentAudioPID = pidVideo + 1;
         for (int i = 2; i < Settings.LANGUAGES.length; i++) {
             String displayName = i == 2 ? Settings.LANGUAGES[i].name() : Settings.LANGUAGES[i].nativeName();
-            audioPidLabels.get(i - 2).setText("PID " + displayName + ": " + currentAudioPID);
-            currentAudioPID++;
+            // A language without a source becomes no stream, so it must not consume a PID here
+            // either - it used to, and every language under it was listed one PID too high, which
+            // only ever looked right because the unused ones happened to be last
+            int track = SettingsUtil.audioTrackIndex(i, this::isLanguageUsed);
+            audioPidLabels.get(i - 2).setText(track < 0
+                    ? displayName + ": not streamed"
+                    : "PID " + displayName + ": " + (pidVideo + 1 + track));
         }
     }
 
+    /** Whether a language has an audio source, and so becomes a track of its own. */
+    private boolean isLanguageUsed(int languageIndex) {
+        return !SettingsUtil.AUDIO_SOURCE_NOT_USED.equals(inputAudioSources[languageIndex].getValue());
+    }
+
+    /**
+     * The compact view: the pulsing bar and the line ffmpeg is writing right now, and nothing else.
+     *
+     * <p>During a session the window shares the screen with OBS and a browser, and almost none of
+     * it is being read - the operator wants to know that it is still live and still keeping up.
+     * So this is the same status bar, moved rather than copied so the breathing animation, the live
+     * dot and the health readout keep their one code path, with ffmpeg's self-refreshing status
+     * line underneath it.
+     *
+     * <p>Deliberately no Stop button. One mistaken click on a floating window that sits above
+     * everything else would end a festival stream; the whole interface is one click away.
+     */
+    private VBox buildCompactView() {
+        compactStatusLine.getStyleClass().add("compact-status-line");
+        // The two ends are the ones worth reading - frame= at the start, speed= at the end - so
+        // what goes missing on a narrow window is taken out of the middle
+        compactStatusLine.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
+        compactStatusLine.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(compactStatusLine, Priority.ALWAYS);
+
+        Button expand = new Button("⤢");
+        expand.getStyleClass().add("preset-button");
+        expand.setTooltip(new Tooltip("Back to the full window (Esc)"));
+        expand.setOnAction(event -> setCompactMode(false));
+
+        HBox statusLineRow = new HBox(6, compactStatusLine, expand);
+        statusLineRow.setAlignment(Pos.CENTER_LEFT);
+        statusLineRow.setPadding(new Insets(4, 6, 4, 6));
+
+        compactStatusRow = statusLineRow;
+        VBox compact = new VBox(statusLineRow);
+        // Anywhere on it takes the window back, for an operator who has not found the button
+        compact.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                setCompactMode(false);
+            }
+        });
+        return compact;
+    }
+
+    /**
+     * Shrinks the window to the compact view, or puts the whole interface back.
+     *
+     * <p>The scene root does not change: the mode colour and its style classes live on it, so only
+     * what sits inside it is swapped. The full interface is detached rather than thrown away, and
+     * the console goes on collecting every line ffmpeg writes while it is out of sight.
+     */
+    private void setCompactMode(boolean compact) {
+        if (compact == compactMode) {
+            return;
+        }
+        compactMode = compact;
+        if (compact) {
+            fullWidth = primaryStage.getWidth();
+            fullHeight = primaryStage.getHeight();
+            wasAlwaysOnTop = primaryStage.isAlwaysOnTop();
+
+            windowRoot.getChildren().remove(nowPlayingBox);
+            nowPlayingBox.setMinWidth(0);
+            compactView.getChildren().setAll(nowPlayingBox, compactStatusRow);
+            shell.setCenter(compactView);
+            shell.setBottom(null);
+            // The point of it: OBS and the browser are in front of the window otherwise
+            primaryStage.setAlwaysOnTop(true);
+            primaryStage.setWidth(COMPACT_WINDOW_WIDTH);
+            primaryStage.setHeight(COMPACT_WINDOW_HEIGHT);
+        } else {
+            compactView.getChildren().remove(nowPlayingBox);
+            nowPlayingBox.setMinWidth(WINDOW_WIDTH - 5);
+            windowRoot.getChildren().add(0, nowPlayingBox);
+            shell.setCenter(fullContent);
+            shell.setBottom(footer);
+            primaryStage.setAlwaysOnTop(wasAlwaysOnTop);
+            primaryStage.setWidth(fullWidth);
+            primaryStage.setHeight(fullHeight);
+        }
+        refreshStatusText();
+        compactButton.setText(compact ? "Full window" : "Compact view");
+    }
+
+    /**
+     * Asks, on the following frame, for the window to lay itself out.
+     *
+     * <p>A workaround, and named as one. Something in this window - the status bar resizing is the
+     * one occasion pinned down - raises a layout request at a moment when an ancestor is already
+     * laying itself out, and JavaFX drops it. The node is left marked NEEDS_LAYOUT and never
+     * registered with the scene, and because the walk that registers a dirty branch stops at the
+     * first ancestor already marked dirty, <em>every</em> branch underneath is stranded behind it -
+     * for the life of the window, since nothing ever clears the flag. It has surfaced three times
+     * now, each time somewhere unrelated to the cause: the advanced options unfolding onto nothing,
+     * the console drawing all of its lines on top of the first, and the health readout never
+     * appearing in the status bar. Asking again on a later frame gets the pass performed, because
+     * by then nothing is mid-layout.
+     *
+     * <p>It is asked for on the outermost box rather than on whatever changed: that is the node
+     * that gets stuck, and laying it out takes every stranded branch under it with it. Coalesced,
+     * so a burst of console lines costs one repair rather than one each.
+     */
+    private void repairWindowLayoutLater() {
+        if (windowRoot == null || !layoutRepairQueued.compareAndSet(false, true)) {
+            return;
+        }
+        Platform.runLater(() -> {
+            layoutRepairQueued.set(false);
+            windowRoot.requestLayout();
+        });
+    }
+
     private Node buildTabControlConsole() {
-        consoleOutputScrollPane = new ScrollPane(consoleOutputTextFlow);
+        consoleOutputBox.getStyleClass().add("console-lines");
+        consoleOutputScrollPane = new ScrollPane(consoleOutputBox);
         consoleOutputScrollPane.setMinSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-300);
         consoleOutputScrollPane.setMaxSize(WINDOW_WIDTH-20, WINDOW_HEIGHT-300);
-        consoleOutputScrollPane.setFitToWidth(true); // Adjusts the width of the ScrollPane to fit its content
-        consoleOutputScrollPane.addEventFilter(MouseEvent.MOUSE_CLICKED, event -> manualScroll = true);
+        consoleOutputScrollPane.setFitToWidth(true);
+        consoleOutputScrollPane.getStyleClass().add("console-scroll-pane");
+        installConsoleSelection();
 
-        consoleOutputScrollPane.vvalueProperty().addListener(v->{
-            if (manualScroll) {
-                this.doWeAutomaticallyScrollAtBottom = false;
-                manualScroll = false;
+        // Any movement the console did not make itself is the operator reading back through the log,
+        // so new lines stop dragging the view down until they scroll to the bottom again
+        consoleOutputScrollPane.vvalueProperty().addListener((observable, oldValue, newValue) -> {
+            if (!scrollingConsoleToTail) {
+                followingConsoleTail.set(newValue.doubleValue() >= 1.0 - CONSOLE_AT_BOTTOM_EPSILON);
             }
         });
 
+        // Scrolling up to read something stops the log dragging the view back down - and then this
+        // says so, and offers the way back. Without it, an operator who has scrolled up has no sign
+        // that the console is still filling underneath them.
+        Button jumpToLatest = new Button("↓ Jump to latest");
+        jumpToLatest.getStyleClass().add("jump-to-latest");
+        jumpToLatest.setOnAction(event -> {
+            followingConsoleTail.set(true);
+            scrollConsoleToTail();
+        });
+        jumpToLatest.visibleProperty().bind(followingConsoleTail.not());
+        jumpToLatest.managedProperty().bind(jumpToLatest.visibleProperty());
+        StackPane consoleStack = new StackPane(consoleOutputScrollPane, jumpToLatest);
+        StackPane.setAlignment(jumpToLatest, Pos.BOTTOM_RIGHT);
+        StackPane.setMargin(jumpToLatest, new Insets(0, 22, 10, 0));
+
         Label consoleLabel = new Label("Console Output");
         consoleLabel.setStyle("-fx-font-weight: bold;");
-        VBox consoleBox = new VBox(10, consoleLabel, consoleOutputScrollPane);
+        VBox consoleBox = new VBox(10, consoleLabel, consoleStack);
         // The monitor publishes on the FX thread. The event's own value is what matters:
         // re-reading the property here used to mishandle fast stop/start sequences.
         streamRecorder.isAliveProperty().addListener((observable, wasAlive, isAlive) -> {
@@ -1157,10 +1466,25 @@ public class StreamingGUI extends Application {
                     pendingIdleReset = null;
                 }
                 startButton.setDisable(true);
-                currentInformationTextProperty.setValue(inProgressText());
+                setStatusText(true);
                 blinkingTimeLine.play(); // Start the animation
+                if (!primaryStage.isFocused()) {
+                    WindowAttention.request(WINDOW_TITLE_PREFIX);
+                }
             }
             else {
+                if (streamRecorder.wasStopRequested()) {
+                    WindowAttention.clear(WINDOW_TITLE_PREFIX);
+                } else {
+                    // ffmpeg died on its own - a lost SRT connection kills the whole process
+                    // on purpose, recordings included, so the operator can relaunch at once.
+                    // ERROR is what raises the alarm sound and the orange bar; the message used
+                    // to have to contain the word "error" to be heard, which meant its wording
+                    // was load-bearing. The attention flag stays up until the window is focused.
+                    appendToConsole("Stream lost - ffmpeg exited with error code "
+                            + crashExitCode() + ". All recording has stopped too;"
+                            + " press Start to relaunch.", ConsoleSeverity.ERROR);
+                }
                 //We wait for 3 seconds to give the time to the thread to end properly
                 //(in the streamRecorder, we also wait 3s for the process to end before destroying it forcefully
                 pendingIdleReset = new PauseTransition(Duration.seconds(3));
@@ -1184,7 +1508,18 @@ public class StreamingGUI extends Application {
             }
         });
 
-        HBox buttonBox = new HBox(80, startButton, stopButton, clearOutputButton, showVUMetersButton);
+        compactButton = new Button("Compact view");
+        compactButton.getStyleClass().addAll("event-button", "secondary-button");
+        compactButton.setTooltip(new Tooltip("""
+                Shrinks the window to the pulsing bar and the line ffmpeg is writing, and keeps it
+                above the other windows - so it can sit in a corner while you work in OBS.
+
+                Esc, the arrows button or a double click brings the whole window back, and anything
+                that goes wrong brings it back by itself."""));
+        compactButton.setOnAction(event -> setCompactMode(!compactMode));
+
+        // Five buttons now, so they sit closer together than the four used to
+        HBox buttonBox = new HBox(30, startButton, stopButton, clearOutputButton, showVUMetersButton, compactButton);
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.setPadding(new Insets(20, 0, 20, 0));
         consoleBox.setPadding(new Insets(0,0,0,10));
@@ -1202,10 +1537,14 @@ public class StreamingGUI extends Application {
      * Called at both ends of the breathing cycle. An ffmpeg error turns the bar orange, which is
      * held for a few seconds so that even a single one is seen pulsing before the bar breathes
      * green again. The taskbar icon keeps alternating, to stay noticeable when minimised.
+     *
+     * <p>A degraded picture is the exception: those faults last until the stream is restarted, so
+     * the bar stays orange rather than announcing a recovery that has not happened.
      */
     private void onPulse(boolean atFullBrightness) {
         primaryStage.getIcons().setAll(stateIcon(atFullBrightness));
-        if (System.currentTimeMillis() - lastErrorMillis > ERROR_COLOUR_HOLD_MS) {
+        boolean stillDegraded = videoFaultLatched || streamHealth.level() != StreamHealth.Level.OK;
+        if (!stillDegraded && System.currentTimeMillis() - lastErrorMillis > ERROR_COLOUR_HOLD_MS) {
             barBaseColor = LIVE_GREEN;
         }
     }
@@ -1217,10 +1556,19 @@ public class StreamingGUI extends Application {
                 (int) Math.round(color.getBlue() * 255));
     }
 
+    /** The exit code of the ffmpeg that just died, readable because the monitor saw it die. */
+    private String crashExitCode() {
+        try {
+            return String.valueOf(streamRecorder.getProcess().exitValue());
+        } catch (RuntimeException e) {
+            // The process never started, or is somehow still winding down
+            return "unknown";
+        }
+    }
+
     private void reinitialiseGraphicElements() {
-        manualScroll = false;
         stopButton.setGraphic(stopPath);
-        currentInformationTextProperty.setValue(waitingText());
+        setStatusText(false);
         stopButton.setDisable(true);
         blinkingTimeLine.stop();
         // An error arriving as the stream died must not tint the next run orange
@@ -1313,21 +1661,8 @@ public class StreamingGUI extends Application {
                 .addListener((observable, oldValue, newValue) -> populateVideoInputModes());
 
         addLanguageRow(inputGrid, row, Settings.LANGUAGES[0].name() + ":", inputAudioSources[0], inputAudioSourcesChannel[0],null,Settings.LANGUAGES[0].name());
-        Label EnMixDelayInfoLabel = new Label("?");
-        EnMixDelayInfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip toolt = new Tooltip("The delay we put on the english mix so it synchronise the english coming  the speakers throw the microphone to avoid echo");
-        Tooltip.install(EnMixDelayInfoLabel, toolt);
-        toolt.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        toolt.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        toolt.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        toolt.getStyleClass().add("tooltip");
-        Label EnMixDelayLabel = new Label("En MixDelay:");
-        // Create an HBox to hold both labels
-        HBox EnMixDelayLabelHBox = new HBox(1,EnMixDelayLabel,EnMixDelayInfoLabel);  // 5 is the spacing between the labels
-        inputGrid.add(EnMixDelayLabelHBox, 3, row);
         row++;
         addLanguageRow(inputGrid, row, Settings.LANGUAGES[1].name(), inputAudioSources[1], inputAudioSourcesChannel[1],null, Settings.LANGUAGES[1].name());
-        inputGrid.add(inputenMixDelay, 3, row);
         row++;
         Separator separator = new Separator();
         separator.setPrefWidth(WINDOW_WIDTH-50);
@@ -1367,10 +1702,9 @@ public class StreamingGUI extends Application {
         Label chooseOutputTypeLabel = new Label("Output type:");
         // Create an HBox to hold both labels
         HBox outPutTypeLabelHBox = new HBox(5);  // 5 is the spacing between the labels
-        Region spac = new Region();
-        spac.setMinWidth(54);
-        spac.setMaxWidth(54);
-        outPutTypeLabelHBox.getChildren().addAll(chooseOutputTypeLabel,chooseOutputTypeLabelInfo,spac, inputChooseBetweenUrlOrFile);
+        // No spacer before the combo any more: it was aligning this row with fields that have since
+        // left it, and it took enough of the two columns to truncate the label to "Outp..."
+        outPutTypeLabelHBox.getChildren().addAll(chooseOutputTypeLabel,chooseOutputTypeLabelInfo, inputChooseBetweenUrlOrFile);
         inputGrid2.add(outPutTypeLabelHBox, 0, row);
         GridPane.setColumnSpan(outPutTypeLabelHBox, 2);
 
@@ -1387,27 +1721,17 @@ public class StreamingGUI extends Application {
         tooltipTimeNeededOutput.getStyleClass().add("tooltip");
         Label timeNeededLabel = new Label("Time needed to open a device (in ms):");
         HBox outputTimeNeededLabelHBox = new HBox(5);  // 5 is the spacing between the labels
-        Region spac2 = new Region();
-        spac.setMinWidth(54);
-        spac.setMaxWidth(54);
+        // The Region that used to sit here was sized by two lines that both addressed the spacer of
+        // the row above, so it was always zero wide; the row fits as it is and does not want the 54px
         inputTimeNeededToOpenADevice.setMaxWidth(50);
-        outputTimeNeededLabelHBox.getChildren().addAll(timeNeededLabel,timeNeededinfoLabel,spac2, inputTimeNeededToOpenADevice);
+        outputTimeNeededLabelHBox.getChildren().addAll(timeNeededLabel,timeNeededinfoLabel, inputTimeNeededToOpenADevice);
         inputGrid2.add(outputTimeNeededLabelHBox, 2, row);
         GridPane.setColumnSpan(outputTimeNeededLabelHBox, 2);
+        // Shown only from the second distinct device onwards - the j>1 test in the recorder is the
+        // only place this value is read. Managed as well as visible, or the row keeps its height.
+        outputTimeNeededLabelHBox.visibleProperty().bind(severalAudioDevices);
+        outputTimeNeededLabelHBox.managedProperty().bind(outputTimeNeededLabelHBox.visibleProperty());
 
-        Label videoPIDinfoLabel = new Label("?");
-        videoPIDinfoLabel.getStyleClass().add("info-for-tooltip");
-        Tooltip tooltip3 = new Tooltip("Value between (32 and 240). Information needed on some streaming platform.\nThe PID (Packet Identifier) in a video stream is used in MPEG transport stream (TS) containers to identify packets within the stream.\n Each type of data (video, audio, subtitles, etc.) in the transport stream is assigned a unique PID, which allows demultiplexing devices to separate and correctly process different types of data.");
-        Tooltip.install(videoPIDinfoLabel, tooltip3);
-        tooltip3.setShowDelay(Duration.seconds(TOOLTIP_DELAY)); // Delay before showing (1 second)
-        tooltip3.setShowDuration(Duration.seconds(TOOLTIP_DURATION)); // How long to show (10 seconds)
-        tooltip3.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
-        tooltip3.getStyleClass().add("tooltip");
-        Label videoPIDLabel = new Label("PID:");
-        // Create an HBox to hold both labels
-        HBox videoPIDLabelHBox = new HBox(1);  // 5 is the spacing between the labels
-        videoPIDLabelHBox.getChildren().addAll(videoPIDLabel, videoPIDinfoLabel, inputVideoPid);
-        inputGrid2.add(videoPIDLabelHBox, 4, row);
         row++;
 
         Label outputUrlinfoLabel = new Label("?");
@@ -1434,6 +1758,38 @@ public class StreamingGUI extends Application {
         inputGrid2.add(outputUrlHBox, 0, row);
         GridPane.setColumnSpan(outputUrlHBox, 6);
         if(inputSrtURL.getText()==null) inputSrtURL.setText("");
+        row++;
+
+        // The livestream's latency, on its own row under the URL it modifies: the row above has no
+        // width left to give - see the note on inputSrtURL - and it is shown and hidden with it,
+        // being meaningless when nothing is streamed.
+        Label srtLatencyInfoLabel = new Label("?");
+        srtLatencyInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip srtLatencyTooltip = new Tooltip("""
+            Replaces the latency the streaming platform's URL asks for, without editing the URL.
+            Left unticked, the URL is handed to ffmpeg exactly as it was pasted.
+
+            This field is in MILLISECONDS. The latency= inside the URL is in microseconds, so 2000
+            here is written into the command as latency=2000000 - which is what the festival's URL
+            already carries. More latency gives SRT more room to re-send lost packets over a poor
+            connection, and costs that much delay; less gets the picture out sooner and forgives less.
+
+            The URL in the settings is never rewritten. Only the command is, and the Information tab
+            shows that command in full.""");
+        Tooltip.install(srtLatencyInfoLabel, srtLatencyTooltip);
+        srtLatencyTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+        srtLatencyTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+        srtLatencyTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        srtLatencyTooltip.getStyleClass().add("tooltip");
+        Region srtLatencySpace = new Region();
+        srtLatencySpace.setMinWidth(50);
+        srtLatencySpace.setMaxWidth(50);
+        srtLatencyHBox.setSpacing(6);
+        srtLatencyHBox.setAlignment(Pos.CENTER_LEFT);
+        srtLatencyHBox.getChildren().setAll(new Label("Stream latency:"), srtLatencyInfoLabel,
+                srtLatencySpace, inputSrtLatencyOverride, inputSrtLatencyMillis, new Label("ms"));
+        inputGrid2.add(srtLatencyHBox, 0, row);
+        GridPane.setColumnSpan(srtLatencyHBox, 6);
         row++;
 
         Label outputDirectoryinfoLabel = new Label("?");
@@ -1667,8 +2023,13 @@ public class StreamingGUI extends Application {
         Label audioBufferLabel = new Label("Audio buffer size:");
         // Create an HBox to hold both labels
         HBox audioBufferLabelHBox = new HBox(2,audioBufferLabel,audioBufferInfoLabel);
-        advancedGrid.add(audioBufferLabelHBox, 4, row);
-        advancedGrid.add(inputAudioSourceBuffer, 5, row);
+        // Only the DirectShow input takes an -rtbufsize for audio: on macOS the samples arrive on
+        // a pipe and on Linux from the sound server, and neither branch emits one. Left out of the
+        // grid rather than hidden, the way the capture-mode combo is left out on Windows.
+        if (Host.isWindows()) {
+            advancedGrid.add(audioBufferLabelHBox, 4, row);
+            advancedGrid.add(inputAudioSourceBuffer, 5, row);
+        }
         //If it's empty, we select the first element
         if(inputAudioSourceBuffer.getValue()==null || inputAudioSourceBuffer.getValue().isEmpty()) inputAudioSourceBuffer.setValue(inputAudioSourceBuffer.getItems().get(0));
         inputAudioSourceBuffer.setPrefWidth(comboWith);
@@ -1796,7 +2157,9 @@ public class StreamingGUI extends Application {
         TitledPane advancedPane = new TitledPane("Advanced options", advancedGrid);
         advancedPane.getStyleClass().add("advanced-pane");
         advancedPane.setExpanded(false);
-        advancedPane.setAnimated(true);
+        // Unfolded in one step rather than over twenty layout passes with the content still hidden:
+        // a single dropped pass during that animation left the pane grown and its rows undrawn
+        advancedPane.setAnimated(false);
         // Percentage columns ask for whatever width makes their widest label fit, which for this
         // grid is far more than the window. Pin it to the width of the grids above, or the pane
         // stretches the tab and the overflow is clipped with no scroll bar to reach it.
@@ -1812,20 +2175,45 @@ public class StreamingGUI extends Application {
         this.primaryStage = primaryStage;
         ScrollPane pane = buildUI();
         // The build footer sits under the scroll pane, not inside it, so it stays visible
-        // whatever the tabs do; the state colours keep styling the scroll pane as before
-        BorderPane shell = new BorderPane(pane);
-        shell.setBottom(buildFooter());
+        // whatever the tabs do; the mode colour is painted on this shell, which is the only node
+        // that is an ancestor of both the tabs and the footer
+        fullContent = pane;
+        footer = buildFooter();
+        compactView = buildCompactView();
+        shell = new BorderPane(pane);
+        // A mode is on from the first frame rather than resolving the colour against nothing;
+        // applySettings() below corrects it as soon as the real output type is known
+        shell.getStyleClass().addAll(WINDOW_SHELL, MODE_LIVESTREAM);
+        shell.setBottom(footer);
         scene = new Scene(shell, WINDOW_WIDTH, WINDOW_HEIGHT);
         scene.getStylesheets().add("javafx@main.css");
+        // Esc is the way out of any view that has taken the window over
+        scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE && compactMode) {
+                setCompactMode(false);
+                event.consume();
+            }
+        });
         primaryStage.setScene(scene);
         primaryStage.setTitle("FFmpeg GUI");
         primaryStage.setOnCloseRequest(e -> {
-            // Call your method here
+            if (!confirmClose()) {
+                e.consume();
+                return;
+            }
             handleClose();
+        });
+        // GNOME drops the demands-attention state the moment the window is focused, so the
+        // dock only stays lit "while streaming" by re-asserting it each time the operator
+        // looks away. On Windows the pulsing taskbar icon covers this already.
+        primaryStage.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (!isFocused && streamRecorder.isAliveProperty().get()) {
+                WindowAttention.request(WINDOW_TITLE_PREFIX);
+            }
         });
         primaryStage.show();
         applySettings();
-        applyStyleOnOutputTypeChange(isTheOutputFileAndUrl.get(),isTheOutputAFile.get());
+        applyStyleOnOutputTypeChange();
         vuMeterPanel = new LevelMeterPanel(inputAudioSources, inputAudioSourcesChannel, settings);
         volumeMonitor = new VolumeMonitor(vuMeterPanel.getVuMeters());
 
@@ -1949,6 +2337,70 @@ public class StreamingGUI extends Application {
         return -1;
     }
 
+    /** What pressing Stop, or closing the window, is about to end. */
+    private String whatStopEnds() {
+        if (isTheOutputFileAndUrl.get()) {
+            return "The livestream and the recording both end.";
+        }
+        return isTheOutputAFile.get() ? "The recording ends." : "The livestream ends.";
+    }
+
+    /**
+     * A question the operator has to answer before something that cannot be taken back.
+     * <p>
+     * Cancel is the default button, deliberately: these appear over a live broadcast, and a stray
+     * Enter or Space - the space bar is already guarded on the Stop button for the same reason -
+     * must not be what ends it.
+     */
+    private boolean confirm(String header, String detail, String confirmLabel) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initOwner(primaryStage);
+        alert.setTitle(WINDOW_TITLE_PREFIX);
+        alert.setHeaderText(header);
+        alert.setContentText(detail);
+        ButtonType go = new ButtonType(confirmLabel, ButtonBar.ButtonData.OK_DONE);
+        alert.getButtonTypes().setAll(go, ButtonType.CANCEL);
+        ((Button) alert.getDialogPane().lookupButton(go)).setDefaultButton(false);
+        ((Button) alert.getDialogPane().lookupButton(ButtonType.CANCEL)).setDefaultButton(true);
+        return alert.showAndWait().orElse(ButtonType.CANCEL) == go;
+    }
+
+    /**
+     * Everything that has to be settled before the window closes, in one question wherever it can
+     * be: a stream that is running is the thing worth asking about, and unsaved language edits come
+     * with their own Save/Discard/Cancel rather than a second yes/no on top of it.
+     */
+    private boolean confirmClose() {
+        boolean streaming = streamRecorder.isAliveProperty().get();
+        if (streaming && !confirm("A stream is running.",
+                whatStopEnds() + " Closing the window ends it.", "Close and stop")) {
+            return false;
+        }
+        if (languagesTab != null && languagesTab.hasUnsavedEdits()) {
+            return confirmDiscardLanguageEdits();
+        }
+        return streaming || confirm("Close the application?",
+                "Nothing is streaming or recording.", "Close");
+    }
+
+    /** Whether the operator is content to lose the language list they have been editing. */
+    private boolean confirmDiscardLanguageEdits() {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initOwner(primaryStage);
+        alert.setTitle(WINDOW_TITLE_PREFIX);
+        alert.setHeaderText("The language list has unsaved changes.");
+        alert.setContentText("Save them before closing, or close and lose them?");
+        ButtonType saveAndClose = new ButtonType("Save and close");
+        ButtonType closeAnyway = new ButtonType("Close without saving");
+        alert.getButtonTypes().setAll(saveAndClose, closeAnyway, ButtonType.CANCEL);
+        ButtonType chosen = alert.showAndWait().orElse(ButtonType.CANCEL);
+        if (chosen == saveAndClose) {
+            saveSettings();
+            return true;
+        }
+        return chosen == closeAnyway;
+    }
+
     private void handleClose() {
         if (vuMeterPanel != null) {
             vuMeterPanel.closeVUMeters();
@@ -1964,20 +2416,33 @@ public class StreamingGUI extends Application {
             return;
         }
         displayPIDInfo();
+        if (languagesTab != null && languagesTab.hasUnsavedEdits()) {
+            appendToConsole("The language list has unsaved changes. This stream uses the list loaded"
+                    + " when the application started.", ConsoleSeverity.WARNING);
+        }
         barBaseColor = LIVE_GREEN;
-        playingError = false;
-        doWeAutomaticallyScrollAtBottom = true;
+        playingError.set(false);
+        followingConsoleTail.set(true);
+        // A new run is judged on its own numbers, and gets the benefit of the doubt on a fault the
+        // last one could not recover from
+        streamHealth.reset();
+        videoFaultLatched = false;
+        statusLineRow = null;
+        compactStatusLine.setText("");
+        statusReadout.setText("");
         streamRecorder.setSrtUrl(inputSrtURL.getText());
-        streamRecorder.setEnMixDelay(Integer.parseInt(inputenMixDelay.getText()));
+        // Unticked hands the recorder null, and the URL then reaches ffmpeg byte for byte
+        streamRecorder.setSrtLatencyMillis(inputSrtLatencyOverride.isSelected()
+                ? Integer.valueOf(parseIntOrDefault(inputSrtLatencyMillis.getText(), 0)) : null);
         streamRecorder.setOutputDirectory(inputOutputDirectory.getText());
         streamRecorder.initialiseVideoDevice(inputVideoSource.getValue());
         streamRecorder.initialiseAudioDevices(Arrays.stream(inputAudioSources).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputAudioSourcesChannel).map(ComboBox::getValue).toArray(String[]::new),Arrays.stream(inputNoiseReductionValues).map(ComboBox::getValue).toArray(String[]::new));
         streamRecorder.setPixelFormat(inputPixelFormat.getValue());
         streamRecorder.setOutputResolution(inputSrtResolution.getValue());
         streamRecorder.setDelay(Integer.parseInt(inputSoundDelay.getText()));
-        streamRecorder.setVideoPid(Integer.parseInt(inputVideoPid.getText()));
         streamRecorder.setEncoder(inputEncoder.getValue());
-        streamRecorder.setTimeNeededToOpenADevice(Integer.parseInt(inputTimeNeededToOpenADevice.getText()));
+        // Zero when the field is hidden and was never filled in: with one device it is not read
+        streamRecorder.setTimeNeededToOpenADevice(parseIntOrDefault(inputTimeNeededToOpenADevice.getText(), 0));
         streamRecorder.setAudioBitrate(inputAudioBitrate.getValue());
         streamRecorder.setAudioBufferSize(inputAudioSourceBuffer.getValue());
         streamRecorder.setVideoBitrate(inputVideoBitrate.getValue());
@@ -2000,7 +2465,6 @@ public class StreamingGUI extends Application {
         textAreaInfo.setText(streamRecorder.getFFMpegCommand());
         playerURLTextField.setText(buildPlayerURL());
         stopButton.setDisable(false);
-        streamRecorder.getOutputLineProperty().addListener((observable, oldValue, newValue) -> Platform.runLater(() -> appendToConsole(newValue, oldValue,null)));
         encodingThread = new Thread(() -> {
             // Your existing code for streamRecorder.run() goes here
             streamRecorder.setSrtUrl(inputSrtURL.getText());
@@ -2012,20 +2476,47 @@ public class StreamingGUI extends Application {
                 if (settings.isDevelopmentMode()) {
                     throw new RuntimeException(e);
                 } else {
-                    Platform.runLater(()->appendToConsole(e.toString(),"",Color.RED));
+                    Platform.runLater(()->appendToConsole(e.toString(), ConsoleSeverity.ERROR));
                 }
             }
         });
         encodingThread.start();
     }
 
+    /**
+     * Castr's stream key, which is the {@code r=} field inside the streamid - SRT's standard
+     * {@code #!::key=value,key=value} syntax. Anchored on {@code streamid=} and on the comma
+     * boundaries rather than searching the whole URL for {@code r=}: {@code linger=} and
+     * {@code smoother=} are real SRT options that also end in one, and either of them written
+     * before the streamid handed the player a fragment of the wrong parameter. Empty when there is
+     * no key to find, so a broken link is left out rather than shown as a working one.
+     */
+    private static String castrStreamKey(String srtUrl) {
+        int streamId = srtUrl.indexOf("streamid=");
+        if (streamId < 0) {
+            return "";
+        }
+        String id = srtUrl.substring(streamId + "streamid=".length());
+        // ffmpeg ends the value at the first &, so the player key has to be read the same way
+        int ampersand = id.indexOf('&');
+        if (ampersand >= 0) {
+            id = id.substring(0, ampersand);
+        }
+        if (id.startsWith("#!::")) {
+            id = id.substring(4);
+        }
+        for (String field : id.split(",")) {
+            if (field.startsWith("r=")) {
+                return field.substring(2);
+            }
+        }
+        return "";
+    }
+
     private String buildPlayerURL() {
-        String outputUrl = inputSrtURL.getText();
-        String rValue = "";
-        int startIndex = outputUrl.indexOf("r=") + 2; // Exclude "r="
-        int commaIndex = outputUrl.indexOf(',', startIndex);
-        if (commaIndex != -1) {
-            rValue = outputUrl.substring(startIndex, commaIndex);
+        String rValue = castrStreamKey(inputSrtURL.getText());
+        if (rValue.isEmpty()) {
+            return "";
         }
         String baseURL = "https://player.castr.com/"+rValue;
         StringBuilder parameters = new StringBuilder("?tracks=");
@@ -2047,11 +2538,11 @@ public class StreamingGUI extends Application {
     private boolean checkParameters() {
         boolean result = true;
         if(inputAudioSources[0].getValue().equals("Not Used")) {
-            appendToConsole("Please select an audio source for the prayers","",Color.RED);
+            appendToConsole("Please select an audio source for the prayers", ConsoleSeverity.ERROR);
             result = false;
         }
         if(inputAudioSources[1].getValue().equals("Not Used")) {
-            appendToConsole("Please select an audio source for the english to be mixed with the translation","",Color.RED);
+            appendToConsole("Please select an audio source for the english to be mixed with the translation", ConsoleSeverity.ERROR);
             result = false;
         }
         // The models ship inside the application and are unpacked on first use, so this only
@@ -2060,60 +2551,55 @@ public class StreamingGUI extends Application {
             File modelFile = NoiseModels.modelFile(modelName);
             if (!modelFile.exists()) {
                 appendToConsole("The model file for the noise reduction filter is not found. It should be at " + modelFile.getPath() +
-                        ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models","",Color.RED);
+                        ".\nYou can dowwload it from here : https://github.com/GregorR/rnnoise-models", ConsoleSeverity.ERROR);
                 result = false;
             }
         }
         if(!Host.isFfmpegAvailable(settings.getFfmpegPath())) {
-            appendToConsole("ffmpeg could not be started. Install it, or set ffmpegPath in settings.ini to its full path.","",Color.RED);
+            appendToConsole("ffmpeg could not be started. Install it, or set ffmpegPath in settings.ini to its full path.", ConsoleSeverity.ERROR);
             result = false;
         }
         if(!checkAudioSampleRates()) {
             result = false;
         }
         if((Host.isMac() || Host.isLinux()) && (inputVideoInputMode.getValue()==null || inputVideoInputMode.getValue().isEmpty())) {
-            appendToConsole("The video device did not report any capture mode. If it is the OBS Virtual Camera, click Start Virtual Camera in OBS first, then choose the device again.","",Color.RED);
+            appendToConsole("The video device did not report any capture mode. If it is the OBS Virtual Camera, click Start Virtual Camera in OBS first, then choose the device again.", ConsoleSeverity.ERROR);
             result = false;
         }
         if(Host.isLinux()) {
             String videoDevicePath = V4l2Devices.devicePath(inputVideoSource.getValue());
             if (videoDevicePath == null || !new File(videoDevicePath).exists()) {
-                appendToConsole("The video device \"" + inputVideoSource.getValue() + "\" is not connected any more.","",Color.RED);
+                appendToConsole("The video device \"" + inputVideoSource.getValue() + "\" is not connected any more.", ConsoleSeverity.ERROR);
                 result = false;
             }
-        }
-        if(inputVideoPid.getText().isEmpty()) {
-            appendToConsole("Please Fill the Video PID Field (see Tooltip for help)","",Color.RED);
-            result = false;
-        }
-        try {
-            Integer.parseInt(inputVideoPid.getText());
-        }
-        catch (NumberFormatException e){
-            appendToConsole("The Video PID must be an integer number (See Tooltip for help).","",Color.RED);
-            result= false;
         }
         try {
             Integer.parseInt(inputSoundDelay.getText());
         }
         catch (NumberFormatException e){
-            appendToConsole("The Delay must be an integer number (See Tooltip for help).","",Color.RED);
+            appendToConsole("The Delay must be an integer number (See Tooltip for help).", ConsoleSeverity.ERROR);
             result= false;
         }
         if(inputSoundDelay.getText().isEmpty()) {
-            appendToConsole("Please Fill the Delay (See Tooltip for help)","",Color.RED);
+            appendToConsole("Please Fill the Delay (See Tooltip for help)", ConsoleSeverity.ERROR);
             result= false;
         }
-        try {
-            Integer.parseInt(inputTimeNeededToOpenADevice.getText());
-        }
-        catch (NumberFormatException e){
-            appendToConsole("The Time needed to open a device Field must be an integer number (See Tooltip for help).","",Color.RED);
-            result= false;
-        }
-        if(inputSoundDelay.getText().isEmpty()) {
-            appendToConsole("Please Fill the Time needed to open a device Field (See Tooltip for help)","",Color.RED);
-            result= false;
+        // Only worth checking while the field is on screen: with one audio device it is hidden,
+        // never read, and an old value left in it must not stop a stream
+        if (severalAudioDevices.get()) {
+            if (inputTimeNeededToOpenADevice.getText().isEmpty()) {
+                appendToConsole("Please Fill the Time needed to open a device Field (See Tooltip for help)", ConsoleSeverity.ERROR);
+                result = false;
+            }
+            else {
+                try {
+                    Integer.parseInt(inputTimeNeededToOpenADevice.getText());
+                }
+                catch (NumberFormatException e) {
+                    appendToConsole("The Time needed to open a device Field must be an integer number (See Tooltip for help).", ConsoleSeverity.ERROR);
+                    result = false;
+                }
+            }
         }
         String outputType = inputChooseBetweenUrlOrFile.getValue();
 
@@ -2121,7 +2607,7 @@ public class StreamingGUI extends Application {
             String directory = inputOutputDirectory.getText();
             File file = new File(directory);
             if (!file.isDirectory()) {
-                appendToConsole(directory + " is not a directory. Please enter a valid directory for the file output.","",Color.RED);
+                appendToConsole(directory + " is not a directory. Please enter a valid directory for the file output.", ConsoleSeverity.ERROR);
                 result = false;
             }
             else {
@@ -2129,7 +2615,7 @@ public class StreamingGUI extends Application {
                 int usableSpaceInGB = (int) (usableSpace / (1024.0 * 1024.0 * 1024.0));
                 int minimumGBNecessary = 15;
                 if(usableSpaceInGB <minimumGBNecessary) {
-                    appendToConsole("There is less than " +minimumGBNecessary+"GB available on the disk (" + usableSpaceInGB + " GB available). Free some space before recording", "", Color.RED);
+                    appendToConsole("There is less than " +minimumGBNecessary+"GB available on the disk (" + usableSpaceInGB + " GB available). Free some space before recording", ConsoleSeverity.ERROR);
                     // Convert bytes to a more readable format (e.g., megabytes, gigabytes)
                     result = false;
                 }
@@ -2139,8 +2625,27 @@ public class StreamingGUI extends Application {
         if (outputType.equals("Srt URL (livestream)") || outputType.equals("Livestream And File")) {
             String url = inputSrtURL.getText();
             if (!url.startsWith("srt://")) {
-                appendToConsole(url + " is not a valid srt url. Please enter a valid srt url to stream.","",Color.RED);
+                appendToConsole(url + " is not a valid srt url. Please enter a valid srt url to stream.", ConsoleSeverity.ERROR);
                 result = false;
+            }
+            // A tee slave list is separated by pipes, so one inside the URL would split the stream
+            // sink into two nonsense slaves rather than fail cleanly
+            if (url.indexOf('|') >= 0) {
+                appendToConsole("The streaming url must not contain a | character.", ConsoleSeverity.ERROR);
+                result = false;
+            }
+            if (inputSrtLatencyOverride.isSelected()) {
+                // One test rather than the parse-then-range pair used elsewhere: empty, not a number
+                // and out of range all deserve the same sentence, and the sentence is the useful part
+                int latency = parseIntOrDefault(inputSrtLatencyMillis.getText(), -1);
+                if (latency < MIN_PLAUSIBLE_SRT_LATENCY_MS || latency > MAX_PLAUSIBLE_SRT_LATENCY_MS) {
+                    appendToConsole("The stream latency must be a whole number of milliseconds between "
+                            + MIN_PLAUSIBLE_SRT_LATENCY_MS + " and " + MAX_PLAUSIBLE_SRT_LATENCY_MS
+                            + "; the festival streams at 2000. This field is in milliseconds - the URL's own"
+                            + " latency= is in microseconds, so 2000 here writes latency=2000000 there.",
+                            ConsoleSeverity.ERROR);
+                    result = false;
+                }
             }
         }
 
@@ -2150,7 +2655,7 @@ public class StreamingGUI extends Application {
                     ? inputOutputDirectory.getText() : commDirectory;
             File file = new File(directory);
             if (!file.isDirectory()) {
-                appendToConsole(directory + " is not a directory. Please enter a valid directory for the communication recording.","",Color.RED);
+                appendToConsole(directory + " is not a directory. Please enter a valid directory for the communication recording.", ConsoleSeverity.ERROR);
                 result = false;
             }
             else {
@@ -2158,16 +2663,16 @@ public class StreamingGUI extends Application {
                 int usableSpaceInGB = (int) (usableSpace / (1024.0 * 1024.0 * 1024.0));
                 int minimumGBNecessary = 15;
                 if(usableSpaceInGB <minimumGBNecessary) {
-                    appendToConsole("There is less than " +minimumGBNecessary+"GB available on the communication recording disk (" + usableSpaceInGB + " GB available). Free some space before recording", "", Color.RED);
+                    appendToConsole("There is less than " +minimumGBNecessary+"GB available on the communication recording disk (" + usableSpaceInGB + " GB available). Free some space before recording", ConsoleSeverity.ERROR);
                     result = false;
                 }
             }
         }
 
         if(!result) {
-            appendToConsole("--------------------------------------------","",Color.RED);
+            appendToConsole("--------------------------------------------", ConsoleSeverity.ERROR);
 
-            appendToConsole("Please correct before starting the command.","",Color.RED);
+            appendToConsole("Please correct before starting the command.", ConsoleSeverity.ERROR);
 
         }
         return result;
@@ -2186,118 +2691,413 @@ public class StreamingGUI extends Application {
             try {
                 encodingThread.join();
                 if (exitCode != 0) {
-                    // FFmpeg process exited with an error
-                    Platform.runLater(()->appendToConsole("FFmpeg process exited with error code " + exitCode,"",Color.BLUE));
+                    // Exit 255 is the SIGTERM this very method just sent, which is how every
+                    // normal session ends. Saying "error code 255" was enough to sound the alarm
+                    // on the way out of every stream, so the ordinary case is now named as such.
+                    boolean askedFor = streamRecorder.wasStopRequested();
+                    appendToConsole(askedFor
+                                    ? "ffmpeg stopped on request (exit code " + exitCode
+                                      + " - 255 is the usual result of Stop)"
+                                    : "ffmpeg exited with error code " + exitCode,
+                            askedFor ? ConsoleSeverity.INFO : ConsoleSeverity.ERROR);
                 }
             } catch (InterruptedException e) {
-                appendToConsole(e.toString(),"",Color.RED);
+                appendToConsole(e.toString(), ConsoleSeverity.ERROR);
             }
         }
     }
 
-    private void appendToConsole(String newLine, String oldLine, Color color) {
-        Text text = new Text(newLine + "\n");
-        if (color!=null) {
-            text.setFill(color);
+    /**
+     * Takes everything ffmpeg has said since the last pass. Draining a queue in batches rather
+     * than reacting to each line one at a time is what keeps a long session responsive: the
+     * console lays itself out and scrolls once per batch instead of once per line, and identical
+     * consecutive lines - a storm of the same warning - all arrive instead of collapsing into one.
+     */
+    private void drainConsoleQueue() {
+        consoleDrainScheduled.set(false);
+        String line;
+        while ((line = streamRecorder.getOutputLines().poll()) != null) {
+            appendFfmpegLine(line);
         }
-        String[] infoTerms = {"start:"};
-        String[] errorTerms = {"error", "fatal", "Failed", "Invalid", "Unable","dropped","failed","Incompatible"};
-        String[] warningTerms = {"ignored","deprecated","unsupported", "Could not","Deprecated","incorrect","confused"};
-        String infoRegex = String.join("|", infoTerms);
-        String errorRegex = String.join("|", errorTerms);
-        String warningRegex = String.join("|", warningTerms);
-        Pattern infoPattern = Pattern.compile(infoRegex,Pattern.CASE_INSENSITIVE);
-        Pattern errorPattern = Pattern.compile(errorRegex,Pattern.CASE_INSENSITIVE);
-        Pattern warningPattern = Pattern.compile(warningRegex,Pattern.CASE_INSENSITIVE);
-        Matcher info = infoPattern.matcher(newLine);
-        Matcher warningMatcher = warningPattern.matcher(newLine);
-        Matcher errorMatcher = errorPattern.matcher(newLine);
+        scrollConsoleToTail();
+        repairWindowLayoutLater();
+    }
 
-        if (info.find()) {
-            text.setFill(Color.BLUE);
-            int startIndex = text.toString().indexOf("start: ");
-            int endIndex = text.toString().indexOf(",", startIndex);
-            if (startIndex != -1 && endIndex != -1) {
-                String startTime = text.toString().substring(startIndex+ "start: ".length(), endIndex);
-                long startMillis = parseStartMillis(startTime);
-                if (startMillis != Long.MIN_VALUE) {
-                    if (firstOpeningDeviceStartupTime == 0) {
-                        firstOpeningDeviceStartupTime = startMillis;
-                    }
-                    if (secondOpeningDeviceStartupTime == 0) {
-                        secondOpeningDeviceStartupTime = startMillis;
-                    }
-                    else {
-                        firstOpeningDeviceStartupTime = secondOpeningDeviceStartupTime;
-                        secondOpeningDeviceStartupTime = startMillis;
-                    }
-                    long timeToOpen = secondOpeningDeviceStartupTime-firstOpeningDeviceStartupTime;
-                    // DirectShow counts from the start of the capture, AVFoundation from when the
-                    // device itself was powered up, so only a plausible gap says anything useful
-                    if (timeToOpen > 0 && timeToOpen <= MAX_PLAUSIBLE_DEVICE_OPEN_MS) {
-                        appendToConsole("Time to open the device: " + timeToOpen+" ms","",Color.RED );
-                    }
-                }
-            }
-        }
-        if (warningMatcher.find()) text.setFill(Color.ORANGE);
-        if (errorMatcher.find()) {
-            text.setFill(Color.RED);
-            barBaseColor = ERROR_ORANGE;
-            lastErrorMillis = System.currentTimeMillis();
-            Task<Void> task = new Task<>() {
-                @Override
-                protected Void call() {
-                    if (playingError) {
-                        return null;
-                    }
-                    playingError = true;
-                    // However playback ends - or fails to start - the flag has to come back,
-                    // or every later alarm stays silent for the rest of the session
-                    try {
-                        String beepSound = Objects.requireNonNull(getClass().getResource("/error.wav")).toString();
-                        Media media = new Media(beepSound);
-                        MediaPlayer mediaPlayer = new MediaPlayer(media);
-                        CountDownLatch latch = new CountDownLatch(1);
-
-                        mediaPlayer.setOnEndOfMedia(latch::countDown);
-                        mediaPlayer.setOnError(() -> {
-                            logger.error("The alert sound failed to play", mediaPlayer.getError());
-                            latch.countDown();
-                        });
-                        mediaPlayer.play();
-                        if (!latch.await(10, TimeUnit.SECONDS)) {
-                            logger.warn("The alert sound never finished; giving up on it");
-                        }
-                        mediaPlayer.dispose();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    } catch (RuntimeException e) {
-                        logger.error("The alert sound could not be played", e);
-                    } finally {
-                        playingError = false;
-                    }
-                    return null;
-                }
-            };
-
-            Thread thread = new Thread(task);
-            thread.setDaemon(true); // The alarm must never keep the application alive on exit
-            thread.start();
-        }
-        if(oldLine!=null && oldLine.startsWith("frame=") && newLine.startsWith("frame="))
-        {
-            int lastIndex = consoleOutputTextFlow.getChildren().size() - 1;
-            if (lastIndex >= 0) {
-                Node lastNode = consoleOutputTextFlow.getChildren().get(lastIndex);
-                consoleOutputTextFlow.getChildren().remove(lastNode);
-            }
-        }
-        consoleOutputTextFlow.getChildren().add(text);
-        if(doWeAutomaticallyScrollAtBottom) {
-            consoleOutputScrollPane.setVvalue(1.0);
+    /** Asks for one pass over the queue; called from the reader threads, so it must be cheap. */
+    private void scheduleConsoleDrain() {
+        if (consoleDrainScheduled.compareAndSet(false, true)) {
+            Platform.runLater(this::drainConsoleQueue);
         }
     }
+
+    /**
+     * One line straight from ffmpeg. The status line is a live readout rather than a log entry, so
+     * it replaces itself in place and is read for the health of the stream; everything else is a
+     * message, and {@link FfmpegMessages} says what it means.
+     */
+    private void appendFfmpegLine(String line) {
+        if (StreamHealth.isStatusLine(line)) {
+            showStatusLine(line);
+            return;
+        }
+        // A message ends the run of status updates, so the next one starts a new node of its own
+        // instead of overwriting a warning the operator has not read yet
+        statusLineRow = null;
+        readDeviceOpenTime(line);
+        FfmpegMessages.Diagnosis diagnosis = FfmpegMessages.diagnose(line);
+        appendToConsole(line, diagnosis.severity());
+        if (diagnosis.hasAdvice()) {
+            // The remedy on its own line under the raw ffmpeg text: the operator gets the fault
+            // already diagnosed instead of having to open the platform notes mid-session
+            appendToConsole("    -> " + diagnosis.advice(), diagnosis.severity());
+        }
+        if (FfmpegMessages.isUnrecoverableCaptureFault(line)) {
+            // This one does not clear by itself, so neither does the colour it puts on the window
+            videoFaultLatched = true;
+        }
+    }
+
+    /**
+     * ffmpeg rewrites its status line twice a second, so it lives as a single self-refreshing
+     * entry at the foot of the console rather than as thousands of log lines. Its counters are
+     * coloured field by field, because "which number went orange" is the whole diagnosis.
+     */
+    private void showStatusLine(String line) {
+        StreamHealth.Alert alert = streamHealth.observe(line, targetFrameRate(), System.currentTimeMillis());
+        statusReadout.setText(streamHealth.readout());
+        applySeverityStyle(statusReadout, streamHealth.level().severity());
+
+        // The status line rewrites itself twice a second, so it overwrites the tail of the log
+        // rather than adding a thousand entries to it
+        // The status line rewrites itself twice a second, so it replaces its own row rather than
+        // adding a thousand of them. It takes the colour of the health it is reporting, so a stream
+        // that is falling behind says so on the line carrying the numbers that prove it.
+        Node row = consoleRow(gutter(ConsoleSeverity.PLAIN) + line, streamHealth.level().severity());
+        List<Node> rows = consoleOutputBox.getChildren();
+        if (statusLineRow != null && !rows.isEmpty() && rows.get(rows.size() - 1) == statusLineRow) {
+            deselectConsoleRow(statusLineRow);
+            rows.set(rows.size() - 1, row);
+        } else {
+            rows.add(row);
+        }
+        statusLineRow = row;
+        scrollConsoleToTail();
+        compactStatusLine.setText(line);
+
+        if (alert != null) {
+            statusLineRow = null; // the alert below is a message, and must not be overwritten
+            // The all-clear is worth saying out loud rather than in the plain text of a log line:
+            // an operator who saw the warning needs to know it went away
+            appendToConsole(alert.message(), alert.level() == StreamHealth.Level.OK
+                    ? ConsoleSeverity.INFO : alert.level().severity());
+        }
+    }
+
+    /**
+     * The gap between two devices opening, which is what the delay setting has to cover. ffmpeg
+     * reports each input's start time once, so the pair is remembered as the lines go by.
+     */
+    private void readDeviceOpenTime(String line) {
+        int startIndex = line.indexOf("start: ");
+        if (startIndex == -1) {
+            return;
+        }
+        int endIndex = line.indexOf(",", startIndex);
+        if (endIndex == -1) {
+            return;
+        }
+        long startMillis = parseStartMillis(line.substring(startIndex + "start: ".length(), endIndex));
+        if (startMillis == Long.MIN_VALUE) {
+            return;
+        }
+        if (firstOpeningDeviceStartupTime == 0) {
+            firstOpeningDeviceStartupTime = startMillis;
+        }
+        if (secondOpeningDeviceStartupTime == 0) {
+            secondOpeningDeviceStartupTime = startMillis;
+        } else {
+            firstOpeningDeviceStartupTime = secondOpeningDeviceStartupTime;
+            secondOpeningDeviceStartupTime = startMillis;
+        }
+        long timeToOpen = secondOpeningDeviceStartupTime - firstOpeningDeviceStartupTime;
+        // DirectShow counts from the start of the capture, AVFoundation from when the
+        // device itself was powered up, so only a plausible gap says anything useful
+        if (timeToOpen > 0 && timeToOpen <= MAX_PLAUSIBLE_DEVICE_OPEN_MS) {
+            appendToConsole("Time to open the device: " + timeToOpen + " ms", ConsoleSeverity.INFO);
+        }
+    }
+
+    /**
+     * Writes one line to the console at the severity the caller asked for. The caller's word is
+     * final: what a message means is known where it is raised, and guessing it from the wording is
+     * how a pressed Stop button - "exited with error code 255", the normal end of every session -
+     * used to sound the alarm.
+     */
+    private void appendToConsole(String line, ConsoleSeverity severity) {
+        // Stop is pressed on the interface but carried out on a background task, so some of these
+        // messages are raised off the FX thread. Marshalling here rather than at each call site
+        // means a new one cannot forget and touch the scene graph from the wrong thread.
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> appendToConsole(line, severity));
+            return;
+        }
+        consoleOutputBox.getChildren().add(consoleRow(gutter(severity) + line, severity));
+        statusLineRow = null;
+        repairWindowLayoutLater();
+        if (severity == ConsoleSeverity.ERROR) {
+            raiseErrorAlarm();
+        }
+        scrollConsoleToTail();
+    }
+
+    /**
+     * The mark that opens a line, so the eye can find the lines that matter in a log the control
+     * can only paint in one colour. Fixed width, so everything below it still lines up, and words
+     * rather than symbols so the log stays readable once it has been pasted somewhere else.
+     */
+    private static String gutter(ConsoleSeverity severity) {
+        return switch (severity) {
+            case ERROR -> "[X] ";
+            case WARNING -> "[!] ";
+            case INFO -> "[i] ";
+            default -> "    ";
+        };
+    }
+
+    /**
+     * One line of the log: its text, coloured and weighted for what it means, and the plain text
+     * behind it so it can be copied out as it reads.
+     *
+     * <p>A row rather than a text control, because only styled text can pick the warnings and the
+     * errors out of a wall of ffmpeg chatter - and a JavaFX text control paints all of its text in
+     * one colour. The cost is that a selection is whole lines: a Text node has no background to
+     * highlight, so the row carries it, and the row is the smallest thing that can.
+     */
+    private Node consoleRow(String text, ConsoleSeverity severity) {
+        Text content = new Text(text);
+        applySeverityStyle(content, severity);
+        TextFlow row = new TextFlow(content);
+        row.getStyleClass().add("console-line");
+        row.setUserData(text);
+        row.setOnMousePressed(event -> pressConsoleRow(row, event.isShiftDown(), event.isControlDown()));
+        // JavaFX's own press-drag-release gesture, rather than working out which row is under the
+        // pointer: the row the drag enters says so itself, which needs no arithmetic to get wrong
+        // and no walk over a log that may be thousands of lines long
+        row.setOnDragDetected(event -> row.startFullDrag());
+        row.setOnMouseDragEntered(event -> {
+            if (consoleSelectionAnchor != null) {
+                selectConsoleRange(consoleSelectionAnchor, row);
+            }
+        });
+        return row;
+    }
+
+    /**
+     * Drag across the log to take a run of lines, shift-click to extend, ctrl-click to pick them
+     * out one by one, then Ctrl+C or the right-click menu. The console stays read-only: this is
+     * about getting an ffmpeg line out of the window and into a message to somebody.
+     */
+    private void installConsoleSelection() {
+        consoleOutputScrollPane.setFocusTraversable(true);
+        // A press on the empty space under the log lets go of whatever was picked out
+        consoleOutputBox.setOnMousePressed(event -> {
+            consoleOutputScrollPane.requestFocus();
+            if (event.getTarget() == consoleOutputBox) {
+                clearConsoleSelection();
+            }
+        });
+
+        MenuItem copy = new MenuItem("Copy");
+        copy.setOnAction(event -> copyConsoleSelection());
+        MenuItem selectAll = new MenuItem("Select all");
+        selectAll.setOnAction(event -> selectAllConsoleRows());
+        MenuItem clear = new MenuItem("Clear output");
+        clear.setOnAction(event -> clearConsole());
+        ContextMenu menu = new ContextMenu(copy, selectAll, new SeparatorMenuItem(), clear);
+        // Copy takes the whole console when nothing is picked out, which is what an operator
+        // sending a log to somebody wants and saves them selecting a thousand lines first
+        menu.setOnShowing(event -> copy.setText(selectedConsoleRows.isEmpty()
+                ? "Copy everything" : "Copy " + selectedConsoleRows.size() + " selected line"
+                        + (selectedConsoleRows.size() == 1 ? "" : "s")));
+        consoleOutputScrollPane.setContextMenu(menu);
+
+        consoleOutputScrollPane.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (!event.isControlDown()) {
+                return;
+            }
+            if (event.getCode() == KeyCode.C) {
+                copyConsoleSelection();
+                event.consume();
+            } else if (event.getCode() == KeyCode.A) {
+                selectAllConsoleRows();
+                event.consume();
+            }
+        });
+    }
+
+    /** A press on a line: take it, extend to it, or add it to what is already picked out. */
+    private void pressConsoleRow(Node row, boolean extend, boolean toggle) {
+        consoleOutputScrollPane.requestFocus();   // so Ctrl+C and Ctrl+A reach the console
+        if (extend && consoleSelectionAnchor != null) {
+            selectConsoleRange(consoleSelectionAnchor, row);
+            return;
+        }
+        if (toggle) {
+            if (selectedConsoleRows.contains(row)) {
+                deselectConsoleRow(row);
+            } else {
+                selectConsoleRow(row);
+            }
+        } else {
+            clearConsoleSelection();
+            selectConsoleRow(row);
+        }
+        consoleSelectionAnchor = row;
+    }
+
+    private void selectConsoleRow(Node row) {
+        if (!selectedConsoleRows.contains(row)) {
+            selectedConsoleRows.add(row);
+            row.getStyleClass().add("console-line-selected");
+        }
+    }
+
+    private void deselectConsoleRow(Node row) {
+        selectedConsoleRows.remove(row);
+        row.getStyleClass().remove("console-line-selected");
+    }
+
+    private void clearConsoleSelection() {
+        for (Node row : List.copyOf(selectedConsoleRows)) {
+            deselectConsoleRow(row);
+        }
+    }
+
+    private void selectConsoleRange(Node from, Node to) {
+        List<Node> rows = consoleOutputBox.getChildren();
+        int start = rows.indexOf(from);
+        int end = rows.indexOf(to);
+        if (start < 0 || end < 0) {
+            return;
+        }
+        clearConsoleSelection();
+        for (int i = Math.min(start, end); i <= Math.max(start, end); i++) {
+            selectConsoleRow(rows.get(i));
+        }
+    }
+
+    private void selectAllConsoleRows() {
+        clearConsoleSelection();
+        consoleOutputBox.getChildren().forEach(this::selectConsoleRow);
+        consoleSelectionAnchor = null;
+    }
+
+    /** Puts the selected lines on the clipboard, or the whole console when nothing is selected. */
+    private void copyConsoleSelection() {
+        List<Node> rows = selectedConsoleRows.isEmpty()
+                ? consoleOutputBox.getChildren() : selectedConsoleRows;
+        if (rows.isEmpty()) {
+            return;
+        }
+        StringBuilder text = new StringBuilder();
+        for (Node row : rows) {
+            text.append(row.getUserData()).append(System.lineSeparator());
+        }
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text.toString());
+        Clipboard.getSystemClipboard().setContent(content);
+    }
+
+    /** One severity vocabulary for the whole window: the classes live in javafx@main.css. */
+    private void applySeverityStyle(Node node, ConsoleSeverity severity) {
+        node.getStyleClass().removeAll(SEVERITY_STYLE_CLASSES);
+        if (severity.styleClass() != null) {
+            node.getStyleClass().add(severity.styleClass());
+        }
+    }
+
+    /**
+     * The red-alert response: the status bar turns, the dock asks for attention and the sound
+     * plays. One sound at a time - a burst of failing lines used to start a thread and a media
+     * player each, all of them talking over one another.
+     */
+    private void raiseErrorAlarm() {
+        // Whatever went wrong, the console is where it is explained - so the compact view gets out
+        // of the way by itself rather than leaving the operator with a red bar and nowhere to read
+        if (compactMode) {
+            setCompactMode(false);
+        }
+        barBaseColor = ERROR_ORANGE;
+        lastErrorMillis = System.currentTimeMillis();
+        if (!primaryStage.isFocused()) {
+            WindowAttention.request(WINDOW_TITLE_PREFIX);
+        }
+        if (!playingError.compareAndSet(false, true)) {
+            return;
+        }
+        Thread thread = new Thread(this::playErrorSound, "error-alarm");
+        thread.setDaemon(true); // The alarm must never keep the application alive on exit
+        thread.start();
+    }
+
+    private void playErrorSound() {
+        // However playback ends - or fails to start - the flag has to come back,
+        // or every later alarm stays silent for the rest of the session
+        try {
+            String beepSound = Objects.requireNonNull(getClass().getResource("/error.wav")).toString();
+            Media media = new Media(beepSound);
+            MediaPlayer mediaPlayer = new MediaPlayer(media);
+            CountDownLatch latch = new CountDownLatch(1);
+
+            mediaPlayer.setOnEndOfMedia(latch::countDown);
+            mediaPlayer.setOnError(() -> {
+                logger.error("The alert sound failed to play", mediaPlayer.getError());
+                latch.countDown();
+            });
+            mediaPlayer.play();
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                logger.warn("The alert sound never finished; giving up on it");
+            }
+            mediaPlayer.dispose();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            logger.error("The alert sound could not be played", e);
+        } finally {
+            playingError.set(false);
+        }
+    }
+
+    /** The frame rate the stream is configured for, which the health thresholds are measured against. */
+    private int targetFrameRate() {
+        try {
+            return Integer.parseInt(inputFramePerSecond.getValue().trim());
+        } catch (NumberFormatException | NullPointerException e) {
+            return 0;
+        }
+    }
+
+    /** Empties the console, and forgets the status line that was standing at the foot of it. */
+    private void clearConsole() {
+        consoleOutputBox.getChildren().clear();
+        selectedConsoleRows.clear();
+        consoleSelectionAnchor = null;
+        statusLineRow = null;
+    }
+
+    /**
+     * Keeps the newest line in view, unless the operator has scrolled back through the log.
+     */
+    private void scrollConsoleToTail() {
+        if (!followingConsoleTail.get()) {
+            return;
+        }
+        // The listener has to be able to tell this move apart from the operator's own
+        scrollingConsoleToTail = true;
+        consoleOutputScrollPane.setVvalue(1.0);
+        scrollingConsoleToTail = false;
+    }
+
     public static void main(String[] args) {
         launch(args);
     }

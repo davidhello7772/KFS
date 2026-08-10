@@ -7,6 +7,9 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -237,6 +240,50 @@ public final class Host {
      * Runs any short query command with the same deadline and drain safety as the ffmpeg
      * queries, and an empty answer instead of an exception when the program is not there.
      */
+    /**
+     * Whether a program can be run, worked out without running it.
+     * <p>
+     * "Not installed" is a perfectly ordinary answer here - the dock-attention tools are optional,
+     * pw-record only exists on a PipeWire machine, and ffmpeg may be somewhere the settings do not
+     * say. Finding that out by spawning the program turns the answer into an IOException and a
+     * stack trace in the log, which buries the failures that do deserve one. A bare name is looked
+     * for along the PATH; anything carrying a separator is taken as the path it already is.
+     */
+    public static boolean isCommandAvailable(String command) {
+        if (command == null || command.isBlank()) {
+            return false;
+        }
+        try {
+            if (command.contains("/") || command.contains(File.separator)) {
+                return Files.isExecutable(Path.of(command));
+            }
+            String searchPath = System.getenv("PATH");
+            if (searchPath == null) {
+                return false;
+            }
+            for (String entry : searchPath.split(File.pathSeparator)) {
+                if (entry.isBlank()) {
+                    continue;
+                }
+                if (Files.isExecutable(Path.of(entry, command))) {
+                    return true;
+                }
+                // The PATH carries no extension on Windows, where the executable has one
+                if (isWindows()) {
+                    for (String extension : List.of(".exe", ".bat", ".cmd")) {
+                        if (Files.isExecutable(Path.of(entry, command + extension))) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (InvalidPathException e) {
+            // A PATH entry this platform cannot even name is not where the program is
+            return false;
+        }
+        return false;
+    }
+
     public static List<String> runCommand(List<String> command) {
         List<String> lines = Collections.synchronizedList(new ArrayList<>());
         try {
@@ -264,7 +311,14 @@ public final class Host {
             }
             reader.join(1000);
         } catch (IOException e) {
-            logger.error("Could not run {}", command.get(0), e);
+            // A missing program is an answer, not a failure: it is how the optional tools and a
+            // mis-set ffmpeg path both arrive, and every one of them used to land in the log as a
+            // stack trace. Anything else that stops a program starting still gets one.
+            if (isCommandAvailable(command.get(0))) {
+                logger.error("Could not run {}", command.get(0), e);
+            } else {
+                logger.info("{} is not installed on this machine", command.get(0));
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
