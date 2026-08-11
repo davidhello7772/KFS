@@ -158,6 +158,7 @@ public class SettingsUtil {
         sortedProps.put("developmentMode", String.valueOf(settings.isDevelopmentMode()));
         sortedProps.put("levelMeterWidthScale", String.valueOf(settings.getLevelMeterWidthScale()));
         sortedProps.put("levelMeterHeightScale", String.valueOf(settings.getLevelMeterHeightScale()));
+        sortedProps.put("renderDevice", settings.getRenderDevice());
 
         // Group 5: Level meter zone thresholds (dB)
         sortedProps.put("meterThreshold.green", String.valueOf(settings.getMeterGreenThresholdDb()));
@@ -195,8 +196,11 @@ public class SettingsUtil {
                     "commRecording", "commResolution", "commVideoBitrate", "commAudioBitrate", "commDirectory"});
 
             writer.write("\n# === SYSTEM SETTINGS ===\n");
+            writer.write("# renderDevice: auto | nvidia | default | cpu - which device draws the windows.\n");
+            writer.write("# One rendering pipeline per process, so it takes effect at the next launch.\n");
             writePropertiesSection(writer, sortedProps,
-                new String[]{"ffmpegPath", "developmentMode", "levelMeterWidthScale", "levelMeterHeightScale"});
+                new String[]{"ffmpegPath", "developmentMode", "levelMeterWidthScale", "levelMeterHeightScale",
+                    "renderDevice"});
 
             writer.write("\n# === LEVEL METER ZONE THRESHOLDS (dB) ===\n");
             writer.write("# Below green = grey zone, then green, yellow and red zones.\n");
@@ -462,6 +466,7 @@ public class SettingsUtil {
         settings.setAudioSampleRate(props.getProperty("audioSampleRate", "48000"));
         settings.setFps(props.getProperty("fps", ""));
         settings.setDevelopmentMode(Boolean.parseBoolean(props.getProperty("developmentMode", "false")));
+        settings.setRenderDevice(props.getProperty("renderDevice", "auto"));
         settings.setLevelMeterWidthScale(parseDouble(props, "levelMeterWidthScale", settings.getLevelMeterWidthScale()));
         settings.setLevelMeterHeightScale(parseDouble(props, "levelMeterHeightScale", settings.getLevelMeterHeightScale()));
         settings.setMeterGreenThresholdDb(parseDouble(props, "meterThreshold.green", settings.getMeterGreenThresholdDb()));

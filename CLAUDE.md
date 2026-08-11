@@ -112,6 +112,20 @@ right ballpark on every platform**. It is NOT a per-OS constant. A historical va
 start-up audio loss before `AudioRelay` existed) — never restore it without measuring.
 Formula: `delay ≈ genuine chain latency (~500) + any start-up audio loss (now ~0)`.
 
+## The render device setting (which GPU draws the window)
+
+Prism builds **one rendering pipeline per process, at toolkit init** — so the "Render
+device" choice (Advanced options: Auto / NVIDIA GPU / Default GPU / CPU) covers every
+window, level meters included, and only applies at the next launch. All of it is decided in
+`GUIStarter.main` before the toolkit exists: CPU is `prism.order=sw`; NVIDIA on Linux is a
+guarded self re-exec in `linux/NvidiaOffload` that plants the two PRIME offload env vars
+Java cannot set for its own process — an offloaded session is therefore **two java
+processes for one window** (supervisor + renderer). Auto offloads only when the NVIDIA
+driver is loaded AND the box is hybrid (sysfs), because offload without an offload source
+is the one arrangement that can fail outright; a child dying nonzero inside 20 s is
+restarted once without offload. The console prints one line at start-up saying which device
+ended up in use. Full story: "Choosing the GPU that draws the window" in the Linux doc.
+
 ## Reading ffmpeg's status line (the GUI console)
 
 `frame= fps= dup= drop= speed=` — the health of the stream in one line:

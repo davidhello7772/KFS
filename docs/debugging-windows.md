@@ -26,3 +26,12 @@ nothing to fix, and a raw stdin feed would *lose* dshow's timestamps.
 
 ≈500 ms — genuine chain latency only (camera + OBS + encoder). See the delay model in
 [../CLAUDE.md](../CLAUDE.md).
+
+## Render device
+
+On Windows the settings' Render device combo offers only **Auto** and **CPU (software)**:
+picking a particular GPU for an application is the operating system's job, under Settings >
+System > Display > Graphics (add java.exe or the KFS shortcut, choose High performance) —
+there is no reliable way to do it from inside the JVM. Auto leaves the hardware default in
+place; CPU selects the same Prism software pipeline (`prism.order=sw`) as on every other
+platform.

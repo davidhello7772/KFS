@@ -18,6 +18,7 @@ PipeWire, OBS + v4l2loopback virtual camera, Behringer UMC1820) and diagnosed li
 | Languages on wrong channels (e.g. channel 1 arriving as 13) | PipeWire routes stream channels to device channels **by label**; without the device's own labels the map shifts. Also: without `--raw`, pw-record prepends a 24-byte AU header that shifts every channel by 12. | `pw-record --raw --channel-map <device's own labels>` | `PulseAudioDevices.channelMap()`, used by both the meters and the stream |
 | SRT stream drops but ffmpeg keeps running and the VOD file keeps growing | ffmpeg 8's tee keeps going when a slave without an explicit `onfail` dies ("continuing with 1/2 slaves"), whatever its documentation says about an `abort` default | `onfail=abort` on the SRT slave — the loss then kills the whole process in ~1 s (peer closed) to ~6 s (network gone), recordings included, alarm + dock attention raised, Start re-enabled | `StreamRecorderRunnable.initialiseFFMpegCommand()`, tee spec; GUI side in the `isAliveProperty` listener |
 | Generic gears icon on the desktop shortcut and in the dock; nothing signals from the taskbar while streaming | No `.desktop` entry matches the window: GNOME matches by **WM_CLASS** (for JavaFX, the Application subclass FQCN — not overridable) and the dock ignores the stage icons the Windows blink trick swaps | Run `scripts/install-desktop-entry.sh`; install `wmctrl` for the streaming-time attention state | Section below |
+| Level meters and window redraws sluggish while OBS is busy; `nvidia-smi` lists no `java` process | JavaFX draws on the **default GPU** — the Intel iGPU on this hybrid laptop, shared with OBS's own compositing — and the NVIDIA card sits idle for the GUI | Settings → Advanced options → **Render device** = Auto (or NVIDIA GPU), restart the app; the console says at start-up which device is in use | "Choosing the GPU that draws the window" below; `NvidiaOffload.java`, `GUIStarter.java` |
 
 ## Per-channel sources for OBS
 
@@ -199,6 +200,171 @@ Three GNOME facts drive the design, all verified here:
   a Wayland session too. While the stream runs the state is re-asserted every time the
   window loses focus; on a stream-lost crash it is raised and left standing.
 
+**The jar the launchers start** is `KFS.jar`, a symlink at the repository root that every
+`mvn package` re-points at the build it just made (the `stable-jar-link` profile in
+`pom.xml`, active on unix only). The wrapper keeps the newest-jar glob it has always used
+as a fallback, for the cases where the link is absent or dangling but a jar is not: a build
+made with the profile switched off, a jar carried over from before the link existed, a
+fresh clone that has not been packaged yet. After a bare `mvn clean` neither finds
+anything, and nothing starts until the next package — which is the honest answer.
+
+## Choosing the GPU that draws the window
+
+The laptop has two GPUs — the Intel iGPU driving the panel and the NVIDIA card doing the
+NVENC encodes — and JavaFX draws on the **default** one, the Intel. That is usually fine,
+but the level meter panel is ~1600 rectangles repainted at 33 fps, and it shares that iGPU
+with OBS's compositing. The **Render device** combo in the settings' Advanced options moves
+the drawing: Auto (NVIDIA when the machine has one), NVIDIA GPU, Default GPU, or CPU
+(software). One Prism pipeline exists per process, chosen at toolkit init, so the choice
+covers every window and **applies at the next launch**; the console prints at start-up
+which device ended up in use.
+
+How each choice lands (`GUIStarter`, decided before the JavaFX toolkit exists):
+
+- **CPU** is one system property, `prism.order=sw`, set in `main()` before launch. Works
+  the same on every platform.
+- **NVIDIA** is PRIME render offload: JavaFX runs on XWayland, its ES2 pipeline reaches the
+  GPU through GLX, and offload is selected by `__NV_PRIME_RENDER_OFFLOAD=1` +
+  `__GLX_VENDOR_LIBRARY_NAME=nvidia` — environment variables that must exist **before the
+  JVM loads GL**. A Java process cannot edit its own environment, so `NvidiaOffload`
+  (linux package) starts the same command line again with them added and waits: **an
+  offloaded session is two java processes for one window**, supervisor + renderer, with the
+  child's exit code passed through. `KFS_RENDER_RELAUNCHED=1` in the child's environment is
+  what stops it relaunching in turn.
+- **Auto** offloads only when `/proc/driver/nvidia/version` exists (the driver is actually
+  loaded, not merely the card present) *and* `/sys/class/drm` shows a non-NVIDIA card
+  beside the NVIDIA one. On an NVIDIA-only box the default GPU already is the NVIDIA, and
+  offload without an offload source is the one arrangement that can fail to make a GL
+  context at all, so it is never requested there. Neither `glxinfo` (not installed) nor
+  `xrandr --listproviders` (returns nothing under XWayland — measured) is consulted.
+
+If the offloaded child dies **nonzero within 20 s** — a driver that cannot create a context
+fails inside seconds — the supervisor starts it once more *without* the offload, carrying
+`KFS_RENDER_FALLBACK=1`, and the window comes up on the default GPU with an orange console
+warning. Exits 130 and 143 (Ctrl-C, SIGTERM) pass straight through: somebody ended the
+child on purpose. An operator-exported `__NV_PRIME_RENDER_OFFLOAD` is honoured and never
+overridden — the app cannot unset what it inherited, so choosing "Default GPU" cannot beat
+a hand-set variable. The ffmpeg children inherit the two variables too, which is inert:
+they steer GLX/EGL vendor choice, and NVENC/CUDA take no notice of them.
+
+## Two cameras from one OBS
+
+Running two KFS instances at once — one streaming, one recording a backup against the
+internet dropping — needs one virtual camera each. **A v4l2loopback device admits exactly
+one capture client.** The second is refused at `VIDIOC_REQBUFS` with `EBUSY` and the
+comment *"only exclusive ownership for each stream"* (`v4l2loopback.c`, and
+`V4L2L_TOKEN_CAPTURE` is a single bit); `start_fileio` refuses the `read()` fallback in the
+same place, so no ffmpeg option gets around it. `max_openers` — 10 by default — governs
+`open()`, not the stream, which is why OBS **plus one** reader is fine and two readers
+never are. Measured here, and worth repeating after any module upgrade:
+
+```bash
+ffmpeg -f v4l2 -i /dev/videoN -t 2 -f null - & ffmpeg -f v4l2 -i /dev/videoN -t 2 -f null -
+```
+
+**The version trap.** This is not how it always was. Upstream's ChangeLog carries *"prevent
+multiple readers to start streaming"*, and NEWS puts the stream-activation rework at
+0.13.2/0.14 — so the multi-reader arrangement that used to work here was lost in the
+upgrade to **0.15.4**, the very upgrade the second row of the table above tells you to make
+to cure the attach-race slideshow. Both facts are true and they pull in opposite
+directions: stay on 0.15.4+ and use the fan-out below. Do not downgrade to buy back a
+second reader — the slideshow is the worse fault, and it is silent.
+
+So one process reads the vcam and copies it to the others:
+
+```
+OBS  ──writes──▶  /dev/video10  "OBS Virtual Camera"
+                        │
+                   (vcam-fanout.sh: the vcam's only reader)
+                        ├──▶ /dev/video11  "KFS Stream Camera"   ◀── KFS Livestreaming
+                        └──▶ /dev/video12  "KFS Backup Camera"   ◀── KFS Recording
+```
+
+Note what changed: the copier is now **in the path of both instances**, not just the second.
+Before 0.15 it could read the vcam alongside KFS, and only the backup drank from the copy.
+
+**Making the devices persistent.** There was no `/etc/modprobe.d` or `/etc/modules-load.d`
+entry at all — the module was loaded ad hoc and the vcam landed on `/dev/video4` only
+because the two USB cameras happened to take 0–3. Since KFS stores its selection as
+`"Description [/dev/videoN]"` (`V4l2Devices.devicePath`), a node that moves at boot breaks a
+saved configuration silently. Pin them:
+
+```
+# /etc/modprobe.d/kfs-v4l2loopback.conf
+options v4l2loopback devices=3 video_nr=10,11,12 card_label="OBS Virtual Camera,KFS Stream Camera,KFS Backup Camera" exclusive_caps=1,1,1 max_buffers=4
+
+# /etc/modules-load.d/kfs-v4l2loopback.conf
+v4l2loopback
+```
+
+**One pair of quotes around the whole label list, not one per label.** Quoting each
+label separately is the obvious thing to write and it is wrong: modprobe strips exactly one
+outer pair and passes the rest through literally, so `"a","b","c"` reaches the kernel as
+`a","b","c`, which it then splits on commas into `a"`, `"b"`, `"c`. That is not cosmetic —
+the label is what KFS shows in its picker and what OBS matches its own camera by. Caught
+here by reading the labels back out of sysfs after the first load:
+
+```bash
+for d in /sys/class/video4linux/*; do [ -r "$d/state" ] && echo "/dev/${d##*/} $(cat "$d/name")"; done
+```
+
+The file is read only when the module loads, so an edit costs a `modprobe -r v4l2loopback
+&& modprobe v4l2loopback` (with OBS and both KFS windows closed) or waits for the reboot.
+
+Numbers 10–12 stay clear of the uvcvideo nodes. `exclusive_caps=1` keeps the existing
+behaviour — a device announces CAPTURE only while something feeds it, so KFS's picker will
+not offer a camera nothing is driving (`V4l2Devices.videoDeviceNames` skips devices that
+cannot list formats). `max_buffers=4` gives the copier more room than the default 2.
+**Check after applying** that OBS still picks `/dev/video10`: it chooses its device itself,
+and with three loopbacks present it has three to choose from — `fuser -v /dev/video1[012]`.
+
+**Surviving a reboot** takes both halves, and only the first is a file. The two entries above
+bring the *cameras* back; the *copy* between them is a process, and it is **started by hand,
+on purpose**. `install-desktop-entry.sh` puts a **KFS Camera Fan-out** launcher on the
+Desktop next to the three app entries — the only one of the four that opens a terminal,
+because the fan-out has nothing but its output, and Ctrl-C in that window is how it ends.
+
+A background service was the obvious alternative and is the wrong default here: a copy
+running unnoticed is a copy still holding the OBS camera when somebody wants it back, and a
+one-instance session — which is most of them — does not want it running at all. Starting it
+deliberately also puts it in the right order, which matters (below). If it is ever wanted
+automatically, `systemd --user` running `vcam-fanout.sh watch` is the shape; `watch` already
+waits quietly for OBS, so it can start at login and sit there.
+
+**Running it.** Order matters, because a loopback carries no format until something feeds
+it: OBS's virtual camera → `scripts/vcam-fanout.sh watch` → the two KFS launchers. Then set
+the video source once per configuration (Livestreaming → `KFS Stream Camera`, Recording →
+`KFS Backup Camera`). `status` shows every camera, whether it is being fed, and who holds
+it; `watch` restarts the copy, which it needs because the copy cannot start before OBS and
+dies with it.
+
+The copier converts to **nv12 once**, which is the layout the encoder wants
+(`V4l2Devices.PREFERRED_FORMATS`) and 1.5 bytes a pixel against YUYV's 2 — doing it here
+spares both instances a chroma resample. It reads the geometry from
+`/sys/class/video4linux/videoN/format` rather than assuming 1080p30, so changing OBS's
+output does not silently produce a stretched copy.
+
+**What it costs, and the failures it introduces.** Cheap in CPU: measured here at 2 min 18 s
+of CPU over 46 min wall — about **5% of one core** for two 1080p30 nv12 outputs. The
+expensive part is elsewhere. The copy adds a frame or two of latency, so **re-measure the
+audio delay** rather than carrying the old value over (the formula is in CLAUDE.md). And the
+fan-out is a single point of failure for *both* instances: kill it and both see `dup=` climb,
+which is the slideshow signature in the table above and reaches the operator through
+`StreamHealth` rather than as an error.
+
+**A stopped OBS does not stop the copy** — the trap worth knowing. Stop the virtual camera in
+OBS and the copier does *not* exit: ffmpeg sits blocked on a device whose producer went away,
+both KFS cameras stay in `capture`, and every reader sees a frozen picture for as long as
+nobody notices. Only the *input* tells the truth, which is why `status` reads each device's
+state rather than counting processes, and why `watch` retires a copy whose input has left
+rather than trusting that a live pid means live frames. The symptom in `status` is an input
+in `output` state while the outputs still read `capture`:
+
+```
+/dev/video10  OBS Virtual Camera  output   ...   <- nothing is feeding this
+/dev/video11  KFS Stream Camera   capture  ...   <- but this still looks fine
+```
+
 ## Diagnostic recipes
 
 - **Power state (check FIRST)**: `powerprofilesctl get`; core clocks:
@@ -220,6 +386,16 @@ Three GNOME facts drive the design, all verified here:
   a steady `fps=30`. Run it *before* starting KFS, never during.
 - **Loopback vs real camera**: loopback nodes live under
   `/sys/devices/virtual/video4linux/`; real cameras sit on the USB/PCI tree.
+- **Which GPU draws the window**: `nvidia-smi` — a `java` process of type `G` means the
+  offload is active; none, while the render device says Auto or NVIDIA, means it never
+  engaged (driver loaded? hybrid?). `java -Dprism.verbose=true -jar KFS.jar` prints the
+  pipeline (`ES2Pipeline` vs `SWPipeline`), and
+  `tr '\0' '\n' < /proc/<pid>/environ | grep -E '__NV|__GLX|KFS_RENDER'` shows what a
+  process was actually started with.
+- **Which configuration is this window?** `ps -ef | grep -o "kfs.dataDir=[^ ]*"` — nothing
+  on screen distinguishes the three. Two lines with **different** data dirs are two
+  instances; two with the **same** dir are one NVIDIA-offloaded window (supervisor +
+  renderer — see "Choosing the GPU that draws the window").
 - **ffmpeg exit 255 = SIGTERM** (the Stop button). Not a crash.
 
 ## Architecture reminder

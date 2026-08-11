@@ -95,6 +95,60 @@ public class Settings implements Serializable {
         return result;
     }
 
+    /**
+     * Which device Prism draws the application's windows on - above all the level meter
+     * panel, whose ~1600 retained rectangles are the one demanding surface in the app.
+     * JavaFX builds one rendering pipeline per process, before the first window opens,
+     * so the choice covers every window and can only take effect at the next launch.
+     * AUTO prefers the NVIDIA card when the machine has one and a driver loaded for it.
+     */
+    public enum RenderDevice {
+        AUTO("auto", "Auto"),
+        NVIDIA("nvidia", "NVIDIA GPU"),
+        DEFAULT_GPU("default", "Default GPU"),
+        CPU("cpu", "CPU (software)");
+
+        private final String token;
+        private final String label;
+
+        RenderDevice(String token, String label) {
+            this.token = token;
+            this.label = label;
+        }
+
+        /** What the settings file stores for this choice. */
+        public String token() {
+            return token;
+        }
+
+        /** What the settings combo shows for this choice. */
+        public String label() {
+            return label;
+        }
+
+        /** A token from the file. Anything unreadable falls back to AUTO with a warning -
+         *  the same contract SettingsUtil.parseDouble gives the numeric settings. */
+        public static RenderDevice fromToken(String raw) {
+            for (RenderDevice device : values()) {
+                if (device.token.equalsIgnoreCase(raw == null ? "" : raw.trim())) {
+                    return device;
+                }
+            }
+            logger.warn("Invalid value for renderDevice '{}', falling back to auto", raw);
+            return AUTO;
+        }
+
+        /** A label out of the combo; the combo only ever offers labels from here. */
+        public static RenderDevice fromLabel(String label) {
+            for (RenderDevice device : values()) {
+                if (device.label.equals(label)) {
+                    return device;
+                }
+            }
+            return AUTO;
+        }
+    }
+
     /** The list the settings file should be written from: the edited one if there is one. */
     public List<Language> effectiveLanguages() {
         return pendingLanguages != null ? pendingLanguages : List.of(LANGUAGES);
@@ -191,6 +245,8 @@ public class Settings implements Serializable {
     private boolean developmentMode = false;
     private double levelMeterWidthScale = 1.0;
     private double levelMeterHeightScale = 1.0;
+    /** A RenderDevice token; a String so an unreadable file degrades to AUTO instead of failing to load. */
+    private String renderDevice = "auto";
     // Level meter zone thresholds (dB): grey below green, then green, yellow and red zones
     private double meterGreenThresholdDb = -9.0;
     private double meterYellowThresholdDb = 6.0;
@@ -367,6 +423,14 @@ public class Settings implements Serializable {
 
     public void setAudioSampleRate(String audioSampleRate) {
         this.audioSampleRate = audioSampleRate;
+    }
+
+    public String getRenderDevice() {
+        return Objects.requireNonNullElse(renderDevice, "auto");
+    }
+
+    public void setRenderDevice(String renderDevice) {
+        this.renderDevice = renderDevice;
     }
 
     public String getFps() {

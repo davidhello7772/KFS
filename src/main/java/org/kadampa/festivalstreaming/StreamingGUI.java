@@ -98,6 +98,9 @@ public class StreamingGUI extends Application {
     private final TextField inputCommDirectory;
     /** The rate the capture devices run at; the recording is encoded at the same rate. */
     private final ComboBox<String> inputAudioSampleRate;
+    /** Which device draws the windows; read by GUIStarter before the toolkit exists, so a
+     *  change only applies at the next launch. */
+    private final ComboBox<String> inputRenderDevice;
     private final ComboBox<String> inputFramePerSecond;
     /**
      * The console: a read-only text area, monospace, on a plain light panel - a log the operator
@@ -293,6 +296,18 @@ public class StreamingGUI extends Application {
         }));
         inputAudioSampleRate.valueProperty().addListener((observable, oldValue, newValue) ->
                 AudioCaptureManager.setPreferredSampleRate(parseIntOrDefault(newValue, 48000)));
+        inputRenderDevice = new ComboBox<>();
+        // Only Linux can pick a GPU from inside the app; Windows assigns per-app GPUs in its
+        // own display settings and macOS decides by itself, so those two offer only the
+        // hardware default and the software renderer
+        if (Host.isLinux()) {
+            for (Settings.RenderDevice device : Settings.RenderDevice.values()) {
+                inputRenderDevice.getItems().add(device.label());
+            }
+        } else {
+            inputRenderDevice.getItems().addAll(
+                    Settings.RenderDevice.AUTO.label(), Settings.RenderDevice.CPU.label());
+        }
         inputFramePerSecond = new ComboBox<>();
         inputFramePerSecond.getItems().add("30");
         inputVideoBitrate = new ComboBox<>();
@@ -1065,6 +1080,13 @@ public class StreamingGUI extends Application {
         inputOutputDirectory.setText(outputDirectoryForThisMachine());
         inputAudioBitrate.setValue(settings.getAudioBitrate());
         inputAudioSampleRate.setValue(settings.getAudioSampleRate());
+        // The saved render device may name a choice this platform's combo does not offer
+        // (a file carried over from the Linux machine): show Auto rather than an empty combo
+        String renderLabel = Settings.RenderDevice.fromToken(settings.getRenderDevice()).label();
+        if (!inputRenderDevice.getItems().contains(renderLabel)) {
+            renderLabel = Settings.RenderDevice.AUTO.label();
+        }
+        inputRenderDevice.setValue(renderLabel);
         inputFramePerSecond.setValue(settings.getFps());
         inputCommRecording.setSelected(settings.isCommRecording());
         // Empty saved values keep the defaults the settings tab put in place
@@ -1133,6 +1155,7 @@ public class StreamingGUI extends Application {
         settings.setOutputDirectory(inputOutputDirectory.getText());
         settings.setAudioBitrate(inputAudioBitrate.getValue());
         settings.setAudioSampleRate(inputAudioSampleRate.getValue());
+        settings.setRenderDevice(Settings.RenderDevice.fromLabel(inputRenderDevice.getValue()).token());
         settings.setFps(inputFramePerSecond.getValue());
         settings.setCommRecording(inputCommRecording.isSelected());
         settings.setCommResolution(inputCommResolution.getValue());
@@ -2057,6 +2080,28 @@ public class StreamingGUI extends Application {
         if(inputAudioSampleRate.getValue()==null || inputAudioSampleRate.getValue().isEmpty()) inputAudioSampleRate.setValue("48000");
         advancedGrid.add(inputAudioSampleRate, 1, row);
         inputAudioSampleRate.setPrefWidth(comboWith);
+
+        Label renderDeviceInfoLabel = new Label("?");
+        renderDeviceInfoLabel.getStyleClass().add("info-for-tooltip");
+        Tooltip renderDeviceTooltip = new Tooltip("""
+                Which device draws this application's windows - above all the level meter panel,
+                the one demanding surface it has.
+
+                Auto prefers the NVIDIA card when the machine has one with a driver loaded.
+                CPU uses the software renderer and needs no GPU at all. The graphics system is
+                chosen once when the application starts, so a change takes effect at the NEXT
+                launch; the console says at start-up which device ended up in use.""");
+        Tooltip.install(renderDeviceInfoLabel, renderDeviceTooltip);
+        renderDeviceTooltip.setShowDelay(Duration.seconds(TOOLTIP_DELAY));
+        renderDeviceTooltip.setShowDuration(Duration.seconds(TOOLTIP_DURATION));
+        renderDeviceTooltip.setHideDelay(Duration.seconds(TOOLTIP_DELAY));
+        renderDeviceTooltip.getStyleClass().add("tooltip");
+        Label renderDeviceLabel = new Label("Render device:");
+        HBox renderDeviceLabelHBox = new HBox(1, renderDeviceLabel, renderDeviceInfoLabel);
+        advancedGrid.add(renderDeviceLabelHBox, 2, row);
+        if(inputRenderDevice.getValue()==null || inputRenderDevice.getValue().isEmpty()) inputRenderDevice.setValue(Settings.RenderDevice.AUTO.label());
+        advancedGrid.add(inputRenderDevice, 3, row);
+        inputRenderDevice.setPrefWidth(comboWith);
         row++;
 
         Label commInfoLabel = new Label("?");
@@ -2213,6 +2258,21 @@ public class StreamingGUI extends Application {
         });
         primaryStage.show();
         applySettings();
+        // One line about who is drawing the windows, decided in GUIStarter before the toolkit
+        // existed; silence means the default GPU by choice, which needs no announcement
+        switch (System.getProperty("kfs.renderStatus", "")) {
+            case "cpu" -> appendToConsole("Rendering on the CPU (software pipeline), as the render device setting asks.",
+                    ConsoleSeverity.INFO);
+            case "offload" -> appendToConsole("The windows are drawn by the NVIDIA GPU (PRIME render offload).",
+                    ConsoleSeverity.INFO);
+            case "fallback" -> appendToConsole("NVIDIA rendering failed to start; using the default GPU for this run.",
+                    ConsoleSeverity.WARNING);
+            case "nvidia-missing" -> appendToConsole("The render device is set to NVIDIA, but no NVIDIA driver is loaded"
+                    + " on this machine. Using the default GPU.", ConsoleSeverity.WARNING);
+            case "nvidia-native" -> appendToConsole("The NVIDIA GPU is already this machine's default renderer.",
+                    ConsoleSeverity.INFO);
+            default -> { /* default GPU: nothing worth a line */ }
+        }
         applyStyleOnOutputTypeChange();
         vuMeterPanel = new LevelMeterPanel(inputAudioSources, inputAudioSourcesChannel, settings);
         volumeMonitor = new VolumeMonitor(vuMeterPanel.getVuMeters());
