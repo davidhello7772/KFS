@@ -11,6 +11,7 @@ PipeWire, OBS + v4l2loopback virtual camera, Behringer UMC1820) and diagnosed li
 | Whole stream choppy (video AND audio), OBS also struggling, `speed=` sagging | GNOME **power-saver profile** clamps all cores to 600–900 MHz. Persists across reboots; easy to hit in quick settings. | `powerprofilesctl set performance` (effective mid-stream in seconds) | First thing to check, always: `powerprofilesctl get` |
 | Video a slideshow, `dup=` climbing ~30/s from the very start, **everything else healthy** (OBS fine, CPU idle, kernel quiet) | **v4l2loopback ≤ 0.15.3 attach race**: the capture session is poisoned at attach time and never recovers; typically the first attach after a reboot. Every re-attach is healthy. | Upgrade the module to **0.15.4+** (race fixes in buffer mapping/locking). Emergency workaround: capture+discard a few frames right before the real capture — a session sacrifice. | Full story in `V4l2Devices.java` class javadoc. Check version: `modinfo v4l2loopback`. **The GUI now says this itself** — see the row below |
 | Console shows **`More than N frames duplicated`** (10, then 100, then 1000…) and the picture is choppy for the rest of the session | Same v4l2loopback attach race as above: this is ffmpeg's standalone announcement of the climbing `dup=`, escalating ×10 each time | Stop and start again — a fresh attach is normally healthy; the poisoned session never recovers on its own. Then check the module version | `FfmpegMessages`: red from N ≥ 100, with the remedy printed under the line, and the status bar held orange for the session rather than breathing back to green. `StreamHealth` sees the same fault ~5 s earlier off the `dup=` counter |
+| Second KFS window opens fine but **Start fails at once**: `Error opening input: Device or resource busy`, `Error opening input file /dev/videoN`, exit code 240 | A v4l2loopback device admits **exactly one capture client**. The second is refused at `VIDIOC_REQBUFS` — *"only exclusive ownership for each stream"* — and the `read()` fallback is refused in the same place, so no ffmpeg option gets around it. `max_openers=10` governs `open()`, not the stream, which is why OBS **plus one** reader is fine | Close the other window (`fuser -v /dev/videoN` names it), or give each instance a camera of its own with `scripts/vcam-fanout.sh` — see "Two cameras from one OBS" below | `FfmpegMessages` prints the remedy under the line. Verified here: two readers on one device, the second always fails; on separate devices both run |
 | Stream takes ~4–5 s to start (console sits after the `Input #0` line) | ffmpeg **probes 5 MB** of the raw s16le audio pipe = ~4.5 s of realtime 10-channel audio. The video device itself opens in ~30 ms. | `-probesize 32 -analyzeduration 0` on the raw pipe input — the format is fully declared, there is nothing to probe | `StreamRecorderRunnable.addAudioInput()` (Linux branch) |
 | Audio ahead of video; delay setting needs seconds instead of ~500 ms | Audio recorded during ffmpeg's start-up was **lost in the 64 KB pipe** (68 ms of 10-ch audio), so the first audio is newer than the first video frame by the start-up duration — which varies with machine speed | `AudioRelay` buffers pw-record's output in a 16 MB ring until ffmpeg reads — lossless hand-off, delay stays ~500 ms on any machine | `AudioRelay.java`; it logs "first audio with N ms buffered" on every start |
 | Level meters freeze / show "Device unavailable" after a USB hiccup and never recover | Capture thread used to give up on the first exception; a wedged `pw-record` read can also block forever | Auto-recovery: retry loop + 3 s stall watchdog that force-kills and reopens | `AudioCaptureManager.captureOnce()` / `startStallWatchdog()` |
@@ -41,6 +42,31 @@ of numbering them, and `stop` / `status` do what they say. The sources live only
 machine reboots, so this belongs in the start-of-day routine, before OBS is opened; OBS
 re-reads the device list every time a source's properties dialog opens, so it does not
 need restarting afterwards.
+
+### Unplugging the interface silently empties every channel
+
+**Symptom:** OBS still lists and still shows every language, and every one of them is
+silent. Nothing has crashed, `status` used to report a cheerful fourteen out of fourteen,
+and the interface itself is back and healthy.
+
+**Cause:** the loopback processes outlive the interface, but their capture streams do not.
+Unplugging tears the stream down, `node.dont-reconnect` stops it coming back — that is the
+property earning its keep, since the alternative is it reattaching to the default input and
+putting the HDMI capture on air — and what is left is a source node fed by nothing. The
+node still exists, so OBS has no reason to complain.
+
+**Fix:** re-run `start`; the sources keep their names, so OBS reattaches on its own within a
+second or two. Better, run the session under `watch`, which polls the link count and
+republishes whenever the channels are pulled away — an unplug, a USB reset, a sound-server
+restart look the same to it, and it waits patiently if the interface is not back yet:
+
+```bash
+./scripts/obs-channel-sources.sh watch -n 14
+```
+
+**Existing is not working**, and `status` now says which: it counts links into the
+interface, not source nodes, and marks any channel that is merely listed as
+`** not attached to the interface **`.
 
 ### The properties that matter, and what they prevent
 
@@ -103,15 +129,47 @@ is what it was the first time this was asked. A difference means the loopback, a
 - **Nothing about the KFS stream changes.** KFS still opens the multichannel device
   through `pw-record` as before; these are additional clients of the same hardware.
 
-## Desktop launcher and dock attention
+## Desktop launchers and dock attention
 
-`scripts/install-desktop-entry.sh` installs, per-user and without sudo: the app icon
-(rendered square from `live-streaming.png`) into the hicolor theme, a `.desktop` entry in
-the app grid, a trusted copy on the Desktop, and a `~/.local/bin/kfs` wrapper that starts
-the newest jar — so a rebuild, whose jar name changes with every commit, needs no
-reinstall. Re-run it only when the icon, the java path or `StreamingGUI`'s name changes.
+`scripts/install-desktop-entry.sh` installs, per-user and without sudo: three icons into
+the hicolor theme, three `.desktop` entries in the app grid, trusted copies of them on the
+Desktop, and a `~/.local/bin/kfs` wrapper that starts the newest jar — so a rebuild, whose
+jar name changes with every commit, needs no reinstall. Re-run it when an icon, the java
+path, `StreamingGUI`'s name or the settings root changes.
 
-Two GNOME facts drive the design, both verified here:
+**Three launchers, one jar, one settings folder each.** `Host.userDataDir()` reads
+`-Dkfs.dataDir`, so a launcher can hand its copy a folder of its own:
+
+| Grid entry | `kfs` argument | Settings folder |
+|---|---|---|
+| KFS Livestreaming | `livestreaming` | `<root>/Livestreaming` |
+| KFS Recording | `recording` | `<root>/Recording` |
+| KFS Testing | `testing` | `<root>/Testing` |
+
+The root is `~/Documents/KFS/Parameters` unless `KFS_PARAM_ROOT` says otherwise, and each
+folder holds that configuration's `settings.ini` and its own unpacked `rnmodel/`. Three
+rules the script enforces so the operator never meets them the hard way:
+
+- **No space anywhere in the root.** The rnnoise model paths under the data dir are inlined
+  into an ffmpeg filter string, so a space would not fail at launch — it would fail at
+  Start, in front of an audience. The installer refuses such a root outright.
+- **`-D` before `-jar`.** After it the JVM hands the word to the application, and nothing in
+  KFS reads its arguments, so a misplaced property is ignored in silence and that launcher
+  quietly shares the default `~/.kfs` with the others.
+- **The wrapper `cd`s into the data dir.** `SettingsUtil.settingsFile` falls back to a
+  `settings.ini` *relative to the working directory* when the data dir has none yet, and a
+  desktop launch starts in `$HOME`. Starting in the data dir means a stray file in `$HOME`
+  cannot become all three configurations' settings at once.
+
+Running `kfs` with no argument still behaves as it always did — no property, so `~/.kfs`.
+
+**Nothing stops two configurations being launched at once**, and nothing warns: the second
+window opens perfectly and fails only at Start, because a virtual camera gives its capture
+slot to one reader. If a stream will not start, look for a second KFS window first — the
+console now says so itself. Two windows *can* both stream, but only once each has a camera
+of its own; that is what the next section is for.
+
+Three GNOME facts drive the design, all verified here:
 
 - **The dock icon is matched, not carried.** GNOME pairs a window with a launcher through
   the window's WM_CLASS, which for a JavaFX app is the FQCN of the `Application` subclass
@@ -119,6 +177,19 @@ Two GNOME facts drive the design, both verified here:
   JavaFX launcher stamps it before `start()` runs and glass's `setName` is set-once, so
   code cannot change it; the `.desktop` entry simply declares it as `StartupWMClass`.
   Renaming or moving the class silently breaks the match — update the script's constant.
+- **One WM_CLASS belongs to one entry, so a fourth entry owns it.** All three launchers
+  start the same class, and if all three declared it the shell would pick a winner and the
+  dock would name the wrong configuration two times in three. So `kfs.desktop` is installed
+  `NoDisplay=true` — invisible in the grid, the sole holder of `StartupWMClass`, carrying
+  the neutral `kfs` icon — and the three visible entries declare none. The dock then says
+  only that KFS is running, which is true whichever launcher was used. GLib still
+  enumerates a hidden entry for the shell's WM_CLASS map (`Gio.AppInfo.get_all()` returns
+  it with `should_show=False`), which is what makes this work; the shell's own
+  `Introspect` and `Screenshot` methods are `AccessDenied` here, so **the dock itself can
+  only be checked by looking at it**. If it ever shows generic gears, fall back in this
+  order: drop `NoDisplay=true` from `kfs.desktop` (an extra, profile-less entry appears in
+  the grid — ugly but deterministic), then move `StartupWMClass` onto
+  `kfs-livestreaming.desktop` and delete `kfs.desktop`.
 - **The dock ignores stage icons**, so the Windows taskbar-blink trick (`onPulse`
   swapping `stage.getIcons()`) is invisible on GNOME. The equivalent is the window
   manager's *demands-attention* state, which the shell renders as a highlighted dock icon
@@ -138,7 +209,13 @@ Two GNOME facts drive the design, both verified here:
 - **OBS logs**: `~/.config/obs-studio/logs/` — `select timed out` storms mean a camera
   source stopped delivering; `Max audio buffering reached` means OBS itself is starving.
 - **Who holds the virtual camera**: `fuser -v /dev/video4` (writer = obs, reader = ffmpeg).
-  Only one streaming reader can attach; a probe while KFS streams gets `Device busy`.
+  Only one capture client can attach; a probe while KFS streams gets `Device busy`.
+  `scripts/vcam-fanout.sh status` says the same thing for every camera at once, and adds
+  whether each is actually being fed.
+- **Is a virtual camera live?** `cat /sys/class/video4linux/videoN/state` — `capture` means
+  a producer is streaming into it, `output` means it is waiting for one. `format` alongside
+  it is empty until then, which is the difference between a camera that exists and one that
+  works.
 - **Measure the vcam raw**: `ffmpeg -f v4l2 -i /dev/video4 -t 15 -f null -` — healthy is
   a steady `fps=30`. Run it *before* starting KFS, never during.
 - **Loopback vs real camera**: loopback nodes live under

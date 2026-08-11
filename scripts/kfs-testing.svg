@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The launcher icon for the Testing configuration - the editable source.
+
+  It is a broadcast test card because that is the one thing an operator reads
+  instantly from across the room, and because it shares no colour with the two
+  icons it sits beside on the Desktop: the red LIVE arcs and the black REC
+  camcorder. At 48 px the bars survive as stripes and the slate still reads.
+
+  scripts/kfs-testing.png is rendered from this once, at authoring time, and is
+  what the installer actually consumes - ImageMagick's SVG delegate is
+  rsvg-convert, which is not installed everywhere, and the letters below would
+  otherwise depend on the fonts of whichever machine ran the install. Re-render
+  after editing (short flags only: XML comments cannot carry a double hyphen):
+
+    inkscape -w 1024 -h 1024 -o scripts/kfs-testing.png scripts/kfs-testing.svg
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="card">
+      <rect x="32" y="32" width="960" height="960" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+
+  <!-- The bars, full width of the card; SMPTE 75% primaries -->
+  <g clip-path="url(#card)">
+    <rect x="32"  y="32" width="960" height="960" fill="#1b1b1b"/>
+    <g>
+      <rect x="32"    y="32" width="137.15" height="640" fill="#c0c0c0"/>
+      <rect x="169.1" y="32" width="137.15" height="640" fill="#c0c000"/>
+      <rect x="306.3" y="32" width="137.15" height="640" fill="#00c0c0"/>
+      <rect x="443.4" y="32" width="137.15" height="640" fill="#00c000"/>
+      <rect x="580.6" y="32" width="137.15" height="640" fill="#c000c0"/>
+      <rect x="717.7" y="32" width="137.15" height="640" fill="#c00000"/>
+      <rect x="854.9" y="32" width="137.15" height="640" fill="#0000c0"/>
+    </g>
+
+    <!-- The slate below them -->
+    <rect x="32" y="672" width="960" height="320" fill="#141414"/>
+    <text x="512" y="892"
+          font-family="DejaVu Sans, Liberation Sans, Helvetica, sans-serif"
+          font-size="210" font-weight="bold" letter-spacing="18"
+          fill="#ffffff" text-anchor="middle">TEST</text>
+  </g>
+
+  <!-- A hairline so the card keeps an edge on a light desktop -->
+  <rect x="32" y="32" width="960" height="960" rx="112" ry="112"
+        fill="none" stroke="#000000" stroke-opacity="0.35" stroke-width="8"/>
+</svg>

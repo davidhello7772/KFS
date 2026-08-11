@@ -25,11 +25,14 @@ with a named audio track per language, with live level meters and alarms in the 
 
 ```bash
 mvn clean package        # shaded jar: target/KFS-1.0.<commit-count>-<hash>.jar
-java -jar target/KFS-*.jar
+java -jar KFS.jar        # the symlink packaging just re-pointed at it
 ```
 
 The jar name embeds the git commit count and hash (git-commit-id plugin) — the build needs
-the `.git` directory present.
+the `.git` directory present. Because that name changes with every commit, packaging on
+unix also points `KFS.jar` at the build it just made (the `stable-jar-link` profile), which
+is the fixed path the desktop launchers start. **Keep that profile working**: without it the
+launchers fall back to a newest-jar glob and the symlink silently goes stale.
 
 ## Platform capture matrix
 
@@ -50,16 +53,41 @@ documented per platform — **read the matching file before debugging**:
 `obs-channel-sources.sh` (Linux) publishes each channel of the interpreter interface
 as its own mono PipeWire source so that OBS — which can only take a capture device whole —
 can add one language at a time. Its channel routing follows the same by-label rule as
-`PulseAudioDevices.channelMap()`, and the wrong-device fallback it exists to prevent is
-written up under "Per-channel sources for OBS" in the Linux doc.
-`install-desktop-entry.sh` (Linux) gives the app its GNOME launcher, icon and dock
-identity — the how and why live under "Desktop launcher and dock attention" in the same
-doc.
+`PulseAudioDevices.channelMap()`; the wrong-device fallback it exists to prevent, and the
+unplug that leaves every channel listed but silent, are written up under "Per-channel
+sources for OBS" in the Linux doc. Its `status` counts links into the interface rather than
+source nodes, because a source that exists and is fed by nothing is the failure worth
+catching, and its `watch` mode is what a session should be run under.
+`vcam-fanout.sh` (Linux) is what lets two instances run at once: it becomes the OBS virtual
+camera's single reader and copies it into one camera per instance, because a v4l2loopback
+device refuses a second capture client outright (proved in the module source, and by two
+readers on one device). It converts to nv12 once rather than leaving both instances to
+resample chroma, reads the geometry from sysfs so a change in OBS cannot yield a stretched
+copy, and — like `obs-channel-sources.sh` — judges a camera by whether anything is *feeding*
+it rather than by whether the node exists. It is a single point of failure for both
+instances by construction; that, the version trap that created the need for it, the
+`modprobe.d` entry pinning the device numbers (**one pair of quotes around the whole
+`card_label` list** — per-label quotes end up inside the names) are under "Two cameras from
+one OBS". It is **started by hand, from its own Desktop launcher**, not by a service: a copy
+running unnoticed still holds the OBS camera, and a one-instance session does not want it at
+all. That launcher is the only one of the four that opens a terminal, because the fan-out is
+its output and Ctrl-C is how it ends.
+`install-desktop-entry.sh` (Linux) gives the app its GNOME launchers, icons and dock
+identity: three entries over the one jar — Livestreaming, Recording and Testing — each
+passing `-Dkfs.dataDir` for a settings folder of its own under `~/Documents/KFS/Parameters`,
+so one machine keeps three configurations that cannot overwrite each other. A fourth entry
+is installed hidden, because one WM_CLASS can only belong to one launcher and three
+claiming it would leave the dock naming the wrong configuration. `kfs-testing.svg` is that
+third icon's source and `kfs-testing.png` the render the installer actually reads — the
+fallback path is ffmpeg, which cannot rasterise SVG. The how and why live under "Desktop
+launchers and dock attention" in the same doc.
 
 ## Output model: one process, up to two encodes, up to three sinks
 
-Two KFS instances can never run at once on Linux — v4l2loopback gives its streaming slot
-to one reader. So everything is one ffmpeg: the livestream encode goes to SRT and/or the
+One virtual camera drives one KFS instance — a v4l2loopback device admits exactly one
+capture client, so two instances need a camera each (`scripts/vcam-fanout.sh`, and "Two
+cameras from one OBS" in the Linux doc). Within an instance everything is still one
+ffmpeg, which is the shape that matters here: the livestream encode goes to SRT and/or the
 VOD file (a `tee`: identical bits, no extra cost), and the optional **communication
 recording** is a second, independent encode (own resolution/bitrates/directory — the
 settings' "Comm." fields) appended as a further output. Hard-won ffmpeg facts baked into
@@ -104,8 +132,14 @@ from the incidents in the platform docs, and meant to be re-measured rather than
 |---|---|---|
 | `dup=` ≥ 25% of the configured fps | 5 s | 20 s, or at once above 80% |
 | `drop=` > 1/s | 5 s | 20 s |
-| `speed=` < 0.97x | 5 s | 10 s below 0.90x |
+| `speed=` < 0.97x (not before 20 s — see below) | 5 s | 10 s below 0.90x |
 | `fps=` < 80% of the configured rate | 5 s | — |
+
+`speed=` is the one that is not a rate: ffmpeg averages it over the whole run, so the second or two
+the encoder spends starting up stays in the figure long afterwards — measured, every stream opened
+around 0.93x at six seconds and was back over 0.97x by twelve, with nothing wrong. That warned on
+every start, so **the speed test does not begin until the run is 20 s old**; the counters need no
+such window because they are already read as per-second rates.
 
 A warning is silent: the console line turns orange and bold, marked `[!]`, and the status-bar
 readout turns orange; nothing sounds. An error is red and bold, marked `[X]`, and adds `error.wav`

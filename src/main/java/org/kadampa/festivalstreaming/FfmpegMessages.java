@@ -53,6 +53,18 @@ final class FfmpegMessages {
                     ConsoleSeverity.ERROR, SLIDESHOW_ADVICE),
             new Rule(Pattern.compile("Dequeued v4l2 buffer contains corrupted data"),
                     ConsoleSeverity.WARNING, "the capture device is handing back bad frames."),
+            // A virtual camera admits one capture client and refuses the second outright, so this
+            // is what a second KFS window looks like from inside ffmpeg: the window opened fine and
+            // Start failed. The remedy names the two ways out because both are real - close the
+            // other window, or give this one a camera of its own through the fan-out.
+            // Matched on the input-open line rather than on the words alone: ffmpeg says the same
+            // thing again in its closing summary, and the remedy is worth printing once
+            new Rule(Pattern.compile("Error opening input: Device or resource busy"),
+                    ConsoleSeverity.ERROR,
+                    "something else is already capturing this camera - a second KFS window, or a"
+                    + " leftover ffmpeg. A virtual camera allows only one reader: close the other"
+                    + " one (check with \"fuser -v /dev/videoN\"), or run scripts/vcam-fanout.sh"
+                    + " to give each instance a camera of its own."),
             new Rule(Pattern.compile("Dequeued v4l2 buffer contains \\d+ bytes, but \\d+ were expected"),
                     ConsoleSeverity.WARNING,
                     "the capture device's frame size and the video input mode disagree -"

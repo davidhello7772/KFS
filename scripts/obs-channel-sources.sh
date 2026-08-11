@@ -14,6 +14,7 @@
 # docs/debugging-linux.md under "Per-channel sources for OBS".
 #
 #   ./obs-channel-sources.sh start [-n 14] [-d Qu-5] [-l English,Spanish,...]
+#   ./obs-channel-sources.sh watch [same options]
 #   ./obs-channel-sources.sh stop
 #   ./obs-channel-sources.sh status
 #
@@ -25,13 +26,15 @@ PREFIX=obsch
 
 usage() {
     cat <<'EOF'
-Usage: obs-channel-sources.sh <start|stop|status> [options]
+Usage: obs-channel-sources.sh <start|watch|stop|status> [options]
 
   start   publish one mono source per channel (restarts them if already up)
+  watch   the same, then republish them whenever the interface is unplugged,
+          reset or otherwise pulls the channels away. Run this for a session.
   stop    remove them again
-  status  list the ones currently published
+  status  list the channels, and say which are really attached to the interface
 
-Options for start:
+Options for start and watch:
   -n N            how many channels to publish, counting from 1 (default 14)
   -d DEVICE       which interface, matched against the source name, the
                   description or the nickname, case-insensitively.
@@ -117,15 +120,85 @@ published_nodes() {
     return 0
 }
 
-status() {
-    local published
-    published=$(published_nodes | wc -l)
-    echo "${published} channel source(s) published, $(our_pids | wc -l) loopback process(es) running"
+# The channels that are genuinely fed by the interface right now.
+#
+# Existing is not the same as working, and the difference is the whole reason
+# this function is here. Unplug the interface and the loopback processes stay
+# up and their sources stay listed - OBS goes on showing the language and goes
+# on hearing nothing, because the capture stream behind it was torn down and,
+# being told never to reconnect, never came back. Only the link into the
+# interface tells the truth, so that is what is counted.
+linked_channels() {
+    pw-link -l 2>/dev/null | awk -v p="$PREFIX" '
+        $0 ~ "^"p"_ch[0-9]+_capture:input_" { node = $0; sub(/_capture:input_.*/, "", node); next }
+        /\|<-/ && node != "" { print node; node = ""; next }
+        { node = "" }' | sort -u
+    return 0
+}
+
+# Each of our sources as "node<TAB>description", in channel order.
+node_descriptions() {
     pactl list sources 2>/dev/null \
         | grep -E "^\s+(Name|Description):" | paste - - \
-        | grep "${PREFIX}_ch" \
-        | sed -E 's/\s*Name:\s*/  /; s/\s*Description:\s*/  ->  /'
+        | sed -E 's/^\s*Name:\s*//; s/\s*Description:\s*/\t/' \
+        | grep "^${PREFIX}_ch" | sort
     return 0
+}
+
+status() {
+    local -A linked=()
+    local node desc orphaned=0 total=0
+    while read -r node; do
+        [ -n "$node" ] && linked[$node]=1
+    done < <(linked_channels)
+
+    while IFS=$'\t' read -r node desc; do
+        total=$((total + 1))
+        if [ -n "${linked[$node]:-}" ]; then
+            printf '  %-12s ->  %s\n' "$node" "$desc"
+        else
+            orphaned=$((orphaned + 1))
+            printf '  %-12s ->  %s   ** not attached to the interface **\n' "$node" "$desc"
+        fi
+    done < <(node_descriptions)
+
+    echo "${total} channel source(s) published, $((total - orphaned)) attached to the interface"
+    if [ "$orphaned" -gt 0 ]; then
+        echo "Those channels are silent in OBS. Re-run \"start\" to reattach them," >&2
+        echo "or use \"watch\" so that a replug repairs itself." >&2
+    fi
+    return 0
+}
+
+# Publish, then keep them published. A loopback that lost its interface never
+# reattaches by itself - deliberately, since the alternative is it silently
+# attaching to the default input instead - so something has to notice and
+# rebuild them. Polling the link count is enough: it is one cheap call, and it
+# sees an unplug, a USB reset and a sound-server restart alike.
+watch_loop() {
+    local expected=14 waiting=0
+    local OPTIND opt
+    while getopts ":n:d:l:" opt; do
+        case $opt in
+            n) expected=$OPTARG ;;
+            *) ;;
+        esac
+    done
+    OPTIND=1
+
+    start "$@" || echo "Waiting for the interface..."
+    echo "Watching ${expected} channel(s); Ctrl-C to stop (the sources stay up)."
+    while true; do
+        sleep 5
+        [ "$(linked_channels | wc -l)" -ge "$expected" ] && { waiting=0; continue; }
+        if start "$@" >/dev/null 2>&1; then
+            printf '%s  channels were lost - republished %s\n' "$(date +%T)" "$expected"
+            waiting=0
+        elif [ "$waiting" -eq 0 ]; then
+            printf '%s  channels lost and the interface is not there - waiting\n' "$(date +%T)"
+            waiting=1
+        fi
+    done
 }
 
 # One channel, published as its own mono source. Reads the device and the
@@ -206,13 +279,20 @@ start() {
     # Whatever still slipped through gets one more attempt, and only then is
     # the interface declared the problem
     local -a missing
-    local attempt
+    local -A up
+    local attempt n
     for attempt in 1 2 3; do
         sleep 1
+        # Attached to the interface, not merely listed - a source that exists
+        # but is fed by nothing is exactly the failure this is looking for
+        up=()
+        while read -r n; do
+            [ -n "$n" ] && up[$n]=1
+        done < <(linked_channels)
         missing=()
         for ((i = 1; i <= count; i++)); do
             printf -v node '%s_ch%02d' "$PREFIX" "$i"
-            published_nodes | grep -qx "$node" || missing+=("$i")
+            [ -n "${up[$node]:-}" ] || missing+=("$i")
         done
         [ ${#missing[@]} -eq 0 ] && break
         [ "$attempt" -eq 3 ] && break
@@ -233,6 +313,7 @@ start() {
 
 case "${1:-}" in
     start)  shift; start "$@" ;;
+    watch)  shift; watch_loop "$@" ;;
     stop)   stop_all && echo "Channel sources removed" ;;
     status) status ;;
     ""|-h|--help) usage ;;

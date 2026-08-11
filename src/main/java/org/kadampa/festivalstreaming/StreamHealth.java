@@ -21,7 +21,9 @@ import java.util.regex.Pattern;
  * <em>rates</em> - a thousand duplicated frames across a six hour festival is nothing, a thousand
  * in a minute is a dead picture. And a condition has to hold before it is announced, the shape
  * VolumeMonitor already uses for the audio alarms, so a hiccup while the encoder settles does not
- * light the window up.
+ * light the window up. {@code speed=} needs more than that: ffmpeg averages it over the whole run,
+ * so the start-up is still in it seconds later, and it is left unjudged for the first
+ * {@value #SPEED_SETTLING_MS} ms rather than warning about a machine that is in fact fine.
  *
  * <p>The thresholds are a first calibration from the incidents in docs/debugging-linux.md - the
  * slideshow ran at roughly the whole frame rate duplicated, the power-saver clamp showed up as
@@ -58,6 +60,15 @@ final class StreamHealth {
     /** Real time is 1.00x. Below this the machine is behind and the stream will not catch up. */
     private static final double SPEED_WARNING = 0.97;
     private static final double SPEED_ERROR = 0.90;
+    /**
+     * ffmpeg averages {@code speed=} over the whole run rather than over the last second, so the
+     * seconds the encoder spends starting up stay in the figure long after the machine is keeping
+     * up: a stream reading 0.93x at six seconds is back over 0.97x by twelve without anything
+     * having changed. That opening sag is the start, not the CPU, and it warned on every single
+     * stream - so {@code speed=} is not judged until the run is past it. The other conditions read
+     * their cumulative counters as rates and need no such window.
+     */
+    private static final long SPEED_SETTLING_MS = 20000;
     /** A capture running this far under the rate it was configured for is losing pictures. */
     private static final double FPS_WARNING_FRACTION = 0.80;
 
@@ -76,6 +87,8 @@ final class StreamHealth {
     private final Sustained slow = new Sustained();
     private final Sustained starved = new Sustained();
 
+    /** When ffmpeg first reported on this run, so the settling window is measured from it. */
+    private long firstReportMillis;
     private long previousMillis;
     private long previousDup;
     private long previousDrop;
@@ -94,6 +107,7 @@ final class StreamHealth {
 
     /** Forgets the previous stream, so a new one is not judged against the last one's counters. */
     void reset() {
+        firstReportMillis = 0;
         previousMillis = 0;
         previousDup = 0;
         previousDrop = 0;
@@ -114,6 +128,9 @@ final class StreamHealth {
      * rather than left wondering whether it scrolled away.
      */
     Alert observe(String statusLine, int targetFps, long nowMillis) {
+        if (firstReportMillis == 0) {
+            firstReportMillis = nowMillis;
+        }
         fps = readDouble(FPS, statusLine, fps);
         speed = readDouble(SPEED, statusLine, 0);
         long dup = readLong(DUP, statusLine);
@@ -137,7 +154,8 @@ final class StreamHealth {
         rate = targetFps > 0 ? targetFps : fps;
         long duplicatingFor = duplicating.heldFor(rate > 0 && dupPerSecond >= DUP_WARNING_FRACTION * rate, nowMillis);
         long droppingFor = dropping.heldFor(dropPerSecond >= DROP_WARNING_PER_SECOND, nowMillis);
-        long slowFor = slow.heldFor(speed > 0 && speed < SPEED_WARNING, nowMillis);
+        boolean settling = nowMillis - firstReportMillis < SPEED_SETTLING_MS;
+        long slowFor = slow.heldFor(!settling && speed > 0 && speed < SPEED_WARNING, nowMillis);
         long starvedFor = starved.heldFor(rate > 0 && fps > 0 && fps < FPS_WARNING_FRACTION * rate, nowMillis);
 
         Level now = Level.OK;
